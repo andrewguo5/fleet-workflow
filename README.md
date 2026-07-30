@@ -1,19 +1,25 @@
 # fleet
 
-Run several coding agents in the same repo at once — safely, and without drowning in
-context-switching. `fleet` gives each agent its own isolated git worktree, a stable
-callsign, a shared status board, and a **Quartermaster** manager that holds the whole
-picture for you.
+cute project to manage multiple coding agents without getting overwhelmed
 
-It installs anywhere: a small Python package with a `fleet` CLI plus a bundled prompt
-pack, portable across projects and machines.
+## the idea
 
-## The idea
+inspired by kun chen's "first mate" setup.
 
-The mechanics that must be deterministic — allocating callsigns, provisioning
-worktrees, writing state, delivering messages — live in Python and are race-safe. The
-judgment — when to sync, how to run a task, how the Quartermaster reasons — lives in
-bundled prompts. Agents never hand-edit state; they shell out to `fleet`.
+there are a few major pain points when working with multiple coding agents in the same repo:
+- one agent can touch a file that another agent is reading and confuse them
+- one agent's git actions can interfere with another's and mess up your git state, thus confusing you
+- when one file is modified by multiple agents each working on distinct things, it becomes hard to commit it to git cleanly. it's unnatural to commit specific line edits of a file (maybe your agent can do it, but it will spend precious tokens figuring it out)
+
+these pain points are of the "stepping on each other's shoes" category, which is a communication problem. there are many ideas out there to solve inter-agent communication, but this is not one of them. instead, the aim is to avoid all of that noise by providing each agent with their own worktree. there's no longer a need for agents to communicate if you just isolate all of them!
+
+there is another category of problem, which occurs somewhere between the keyboard and the chair. that is, the human brain gets tired, loses focus, and starts a slow meltdown process due to constant context switching. at optimal conditions with good focus, a human can juggle maybe 3 or 4 tasks concurrently, but beyond that (and even at that level of concurrency), you need some tools to help you out. 
+
+this project features two thematic solutions:
+- a worktree-isolation alias for spinning up a worker-agent in a git worktree with one command (and handling safe teardown once it's done)
+- a coordinator agent, named the "quartermaster", which monitors the agents and assists the human in context switching and managing the worker-agents.
+
+LLM dump below, with my editorials in (a.g. ... ) (those are my initials, not latin for anything):
 
 ### Roles
 
@@ -38,8 +44,7 @@ For local development:
 uv tool install --editable .        # or: pipx install --editable .
 ```
 
-State lives under `~/.claude-work/projects/<project-slug>/fleet/` (falling back to
-`~/.claude/…`), outside your repo, so every worktree shares one view and your repo stays
+State lives under `~/.claude/projects/<project-slug>/fleet/`, outside your repo, so every worktree shares one view and your repo stays
 clean. Set `FLEET_STATE_HOME` to relocate it.
 
 ## Choosing your agent
@@ -49,7 +54,7 @@ Pass `--agent` per invocation, or set `FLEET_AGENT` once as your default:
 
 ```bash
 fleet recruit --agent "claude"        # your personal agent
-fleet recruit --agent "claude-work"   # a work-scoped wrapper
+fleet recruit --agent "claude-work"   # a work-scoped wrapper (a.g. i have a separate claude alias for my work account)
 export FLEET_AGENT="claude"           # or set a default and just run `fleet recruit`
 ```
 
@@ -87,6 +92,7 @@ fleet done                  # tear down + archive when finished
   with the callsign as lease holder, so the pool will not hand the worktree to anyone
   else or prune it until `fleet done` returns it. Verified against treehouse's CLI
   contract by source inspection; not yet exercised against a live install.
+  (a.g. i came across this when watching kun chen's agentic setup video, which inspired this project, but i haven't really tried it. i have a philosophy of not using things until i encounter the problem/painpoint that prompted someone to build it. it seems like nowadays agents can manage their own worktrees just fine, and i don't really care too much about the worktree provision time... yet...)
 
 ## Command reference
 
