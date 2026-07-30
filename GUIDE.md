@@ -4,6 +4,12 @@ A linear walkthrough for your first fleet. Run the commands top to bottom; each 
 below the command says what just happened. For the full command reference, see the
 [README](README.md).
 
+The same walkthrough is available from the CLI, without leaving your terminal:
+
+```bash
+fleet --guide
+```
+
 ## Setup (once per machine)
 
 ```bash

@@ -18,7 +18,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from . import mailbox, status
+from . import guide, mailbox, status
 from . import worktree as worktree_mod
 from .callsign import FleetFullError, next_available
 from .store import FleetStore, NotAGitRepoError, _run_git
@@ -37,6 +37,31 @@ COMMAND_PROMPTS = ("fleet-start.md", "fleet-quartermaster.md")
 
 # How many dirty paths `fleet done` lists before collapsing the rest into a count.
 DIRTY_PREVIEW_LIMIT = 10
+
+
+def _show_guide(value: bool) -> None:
+    """Eager ``--guide`` callback: print the walkthrough and exit before any command.
+
+    Deliberately does no git or state lookup — someone reading the guide has very
+    likely not run ``fleet init`` yet, and may not even be inside a repo.
+    """
+    if not value:
+        return
+    guide.print_guide(console)
+    raise typer.Exit()
+
+
+@app.callback()
+def main(
+    show_guide: bool = typer.Option(
+        False,
+        "--guide",
+        callback=_show_guide,
+        is_eager=True,
+        help="Show a linear walkthrough of the commands, in the order you'd run them.",
+    ),
+) -> None:
+    """Manage a fleet of parallel coding agents, each in its own git worktree."""
 
 
 # --------------------------------------------------------------------------
@@ -103,6 +128,7 @@ def init() -> None:
     console.print(f"  state dir : {store.base}")
     console.print(f"  commands  : {COMMANDS_DIR}/{{{', '.join(COMMAND_PROMPTS)}}}")
     console.print("  recruit your first worker with: [bold]fleet recruit --agent \"<your-agent-cmd>\"[/bold]")
+    console.print("  new to fleet? [bold]fleet --guide[/bold] walks through the whole loop.")
 
 
 @app.command()

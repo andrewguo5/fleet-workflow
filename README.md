@@ -63,8 +63,8 @@ line for you to launch the agent yourself.
 
 ## Use
 
-New here? [GUIDE.md](GUIDE.md) is a linear first-run walkthrough. This section is the
-short form.
+New here? Run `fleet --guide` for a linear walkthrough in your terminal, or read
+[GUIDE.md](GUIDE.md). This section is the short form.
 
 ```bash
 # once per project
@@ -98,6 +98,7 @@ fleet done                  # tear down + archive when finished
 
 | Command | Who | What |
 |---|---|---|
+| `fleet --guide` | you | linear walkthrough for a first run |
 | `fleet init` | you | install prompts + scaffold state |
 | `fleet recruit [--agent] [--provider]` | you | provision a worktree + launch a worker |
 | `fleet qm [--agent]` | you | launch the Quartermaster |
