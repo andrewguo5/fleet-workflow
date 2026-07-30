@@ -19,6 +19,7 @@ import typer
 from rich.console import Console
 
 from . import guide, mailbox, status
+from . import launch as launch_mod
 from . import worktree as worktree_mod
 from .callsign import FleetFullError, next_available
 from .store import FleetStore, NotAGitRepoError, _run_git
@@ -141,6 +142,17 @@ def recruit(
     store = _store()
     store.ensure_dirs()
 
+    # Resolve the agent command before provisioning anything. launch() execs and never
+    # returns, so a command that cannot start would otherwise strand a worker holding a
+    # worktree with no agent in it and no error on screen.
+    resolved_agent = _agent_cmd(agent)
+    if resolved_agent and not launch_mod.can_launch(resolved_agent):
+        _fail(
+            f"agent command not found: {resolved_agent!r}\n"
+            "nothing was provisioned. pass a command your shell can run "
+            "(--agent, or $FLEET_AGENT)."
+        )
+
     with store.lock():
         try:
             callsign = next_available(store.live_callsigns())
@@ -165,8 +177,7 @@ def recruit(
     console.print(f"  branch   : fleet/{callsign}")
     console.print(f"  worktree : {wt}")
 
-    from .launch import launch  # imported late; launch() may exec and never return
-    hint = launch(Path(wt), _agent_cmd(agent))
+    hint = launch_mod.launch(Path(wt), resolved_agent)
     if hint:
         console.print("  no --agent given; open your agent yourself:")
         console.print(f"    [bold]{hint}[/bold]")
@@ -179,8 +190,12 @@ def qm(
     """Launch the Quartermaster agent in the repo root, primed with /fleet-quartermaster."""
     store = _store()
     store.ensure_dirs()
-    from .launch import launch
-    hint = launch(store.repo_root, _agent_cmd(agent), initial_prompt="/fleet-quartermaster")
+    resolved_agent = _agent_cmd(agent)
+    # Nothing is provisioned here, but exec still replaces this process, so an
+    # unresolvable command would exit silently with no explanation.
+    if resolved_agent and not launch_mod.can_launch(resolved_agent):
+        _fail(f"agent command not found: {resolved_agent!r}")
+    hint = launch_mod.launch(store.repo_root, resolved_agent, initial_prompt="/fleet-quartermaster")
     if hint:
         console.print("  no --agent given; start the quartermaster yourself:")
         console.print(f"    [bold]{hint}[/bold]")
@@ -334,17 +349,14 @@ def inbox(
         console.print(f"  {m.stamp} {m.attribution} {m.text}", markup=False)
 
 
-@app.command()
-def done(
-    force: bool = typer.Option(False, "--force", help="Tear down even if the worktree has uncommitted changes (they are discarded)."),
-) -> None:
-    """Mark done, tear down the worktree, and archive the worker file. Runs NO content
-    git ops — commit, squash-merge, and handoff are the worker's own responsibility and
-    must happen before this.
+def _stand_down(store: FleetStore, callsign: str, force: bool, invoked_as: str) -> None:
+    """Tear down one worker: release the worktree, archive the record, free the callsign.
 
-    Refuses to run while the worktree is dirty, so you never have to check first."""
-    store = _store()
-    callsign = _resolve_self(store)
+    Shared by ``done`` (the worker retiring itself) and ``dismiss`` (recovering one
+    from outside), so the two can never drift on what teardown means. ``invoked_as``
+    only shapes the retry advice, which differs because ``dismiss`` takes a callsign
+    and ``done`` infers it.
+    """
     w = _load_worker(store, callsign)
 
     # Check before mutating anything: a refusal must leave the worker fully intact.
@@ -358,8 +370,8 @@ def done(
                 console.print(f"  {line}", markup=False, style="yellow")
             if len(entries) > DIRTY_PREVIEW_LIMIT:
                 console.print(f"  [dim]… and {len(entries) - DIRTY_PREVIEW_LIMIT} more[/dim]")
-            console.print("\ncommit or stash your work, then re-run [bold]fleet done[/bold].")
-            console.print("to discard it instead: [bold]fleet done --force[/bold]")
+            console.print(f"\ncommit or stash the work, then re-run [bold]{invoked_as}[/bold].")
+            console.print(f"to discard it instead: [bold]{invoked_as} --force[/bold]")
             raise typer.Exit(1)
 
     w.status = "done"
@@ -383,6 +395,37 @@ def done(
         store.mail_path(callsign).unlink(missing_ok=True)
 
     console.print(f"[green]{callsign} stood down.[/green] archived -> {archive_path}")
+
+
+@app.command()
+def done(
+    force: bool = typer.Option(False, "--force", help="Tear down even if the worktree has uncommitted changes (they are discarded)."),
+) -> None:
+    """Mark done, tear down the worktree, and archive the worker file. Runs NO content
+    git ops — commit, squash-merge, and handoff are the worker's own responsibility and
+    must happen before this.
+
+    Refuses to run while the worktree is dirty, so you never have to check first."""
+    store = _store()
+    _stand_down(store, _resolve_self(store), force, invoked_as="fleet done")
+
+
+@app.command()
+def dismiss(
+    callsign: str = typer.Argument(..., help="Worker to stand down."),
+    force: bool = typer.Option(False, "--force", help="Tear down even if the worktree has uncommitted changes (they are discarded)."),
+) -> None:
+    """Stand down a worker by callsign, from anywhere in the repo.
+
+    Recovery for a worker nobody is inside: an agent that failed to launch, crashed on
+    startup, or was abandoned. ``fleet done`` must run from within the worktree, which
+    is exactly what you cannot do when no session is there. Same rules as ``done`` —
+    the branch survives and uncommitted work blocks teardown."""
+    store = _store()
+    if not store.worker_path(callsign).exists():
+        live = ", ".join(store.live_callsigns()) or "none"
+        _fail(f"no worker '{callsign}'. live workers: {live}")
+    _stand_down(store, callsign, force, invoked_as=f"fleet dismiss {callsign}")
 
 
 if __name__ == "__main__":

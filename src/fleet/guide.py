@@ -125,6 +125,11 @@ SECTIONS: tuple[Section, ...] = (
                 note="Only when you mean to throw the uncommitted work away.",
                 where="../wt/alpha",
             ),
+            Step(
+                command="fleet dismiss alpha",
+                note="Stands a worker down from outside, for when its agent never started or has gone away.",
+                where="your project root",
+            ),
         ),
     ),
 )

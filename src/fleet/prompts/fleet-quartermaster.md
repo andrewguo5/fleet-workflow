@@ -46,6 +46,29 @@ lands first," or "charlie is touching the same table, hold your migration." Neve
 it to try to answer a worker that is blocked waiting for input; that is the human's, in
 the worker's window.
 
+## Spotting stalled workers
+
+A worker whose agent never started — a blocked or mistyped agent command, a crash on
+startup, an abandoned session — sits at `recruited` forever, holding a worktree and a
+callsign with nobody inside it. It looks idle rather than broken, so nobody notices.
+
+Watch for a worker that is `recruited` with no `thread`, no `stage`, and an `updated`
+stamp that has not moved since it was `claimed`. One that was just recruited is normal;
+one still like that much later is stranded.
+
+When you see one, tell the human and recommend standing it down:
+
+```
+fleet dismiss <callsign>
+```
+
+This works from anywhere in the repo (unlike `fleet done`, which must run inside the
+worktree — impossible when no session is there). It keeps the branch and refuses if the
+worktree has uncommitted changes.
+
+**Confirm with the human before dismissing.** A quiet worker may simply be one whose
+agent is thinking, or one they parked deliberately. Recommend; let them decide.
+
 ## Optional working notes
 
 You may keep light notes (running themes, what you've already surfaced, what you're

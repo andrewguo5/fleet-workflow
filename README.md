@@ -106,6 +106,7 @@ fleet done                  # tear down + archive when finished
 | `fleet status [--verbose]` | QM | one-shot readout |
 | `fleet inspect <callsign>` | QM | one worker's full file + mail |
 | `fleet msg <callsign\|all> "…"` | QM | async directive to a worker |
+| `fleet dismiss <callsign> [--force]` | you / QM | stand down a worker from outside its worktree |
 | `fleet sync [flags]` | worker | update own state |
 | `fleet inbox [--all]` | worker | drain mailbox |
 | `fleet done [--force]` | worker | teardown + archive |
@@ -113,6 +114,11 @@ fleet done                  # tear down + archive when finished
 `fleet done` refuses to tear down a worktree with uncommitted changes — including
 untracked files — and lists what is at stake, so you never have to check before
 standing a worker down. Pass `--force` to discard the work deliberately.
+
+`fleet done` runs from inside a worktree, which is no help when the agent never
+started. `fleet dismiss <callsign>` stands a worker down from anywhere in the repo,
+under the same rules. `fleet recruit` also resolves your agent command *before*
+provisioning, so a command your shell cannot run fails with nothing left behind.
 
 ## Development
 
