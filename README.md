@@ -58,6 +58,9 @@ line for you to launch the agent yourself.
 
 ## Use
 
+New here? [GUIDE.md](GUIDE.md) is a linear first-run walkthrough. This section is the
+short form.
+
 ```bash
 # once per project
 fleet init
@@ -80,7 +83,10 @@ fleet done                  # tear down + archive when finished
 - **plain** (default) — stock `git worktree`, zero dependencies.
 - **treehouse** (strict opt-in, `--provider treehouse`) — leases pooled worktrees from
   the [treehouse](https://github.com/kunchenguid/treehouse) CLI for build-cache and
-  dependency reuse across sessions.
+  dependency reuse across sessions. fleet takes a durable lease (`get --lease`) tagged
+  with the callsign as lease holder, so the pool will not hand the worktree to anyone
+  else or prune it until `fleet done` returns it. Verified against treehouse's CLI
+  contract by source inspection; not yet exercised against a live install.
 
 ## Command reference
 
@@ -95,7 +101,11 @@ fleet done                  # tear down + archive when finished
 | `fleet msg <callsign\|all> "…"` | QM | async directive to a worker |
 | `fleet sync [flags]` | worker | update own state |
 | `fleet inbox [--all]` | worker | drain mailbox |
-| `fleet done` | worker | teardown + archive |
+| `fleet done [--force]` | worker | teardown + archive |
+
+`fleet done` refuses to tear down a worktree with uncommitted changes — including
+untracked files — and lists what is at stake, so you never have to check before
+standing a worker down. Pass `--force` to discard the work deliberately.
 
 ## License
 

@@ -19,6 +19,7 @@ import typer
 from rich.console import Console
 
 from . import mailbox, status
+from . import worktree as worktree_mod
 from .callsign import FleetFullError, next_available
 from .store import FleetStore, NotAGitRepoError, _run_git
 from .worker import Worker, now_stamp, today_stamp
@@ -33,6 +34,9 @@ console = Console()
 
 COMMANDS_DIR = Path("~/.claude/commands").expanduser()
 COMMAND_PROMPTS = ("fleet-start.md", "fleet-quartermaster.md")
+
+# How many dirty paths `fleet done` lists before collapsing the rest into a count.
+DIRTY_PREVIEW_LIMIT = 10
 
 
 # --------------------------------------------------------------------------
@@ -305,13 +309,33 @@ def inbox(
 
 
 @app.command()
-def done() -> None:
+def done(
+    force: bool = typer.Option(False, "--force", help="Tear down even if the worktree has uncommitted changes (they are discarded)."),
+) -> None:
     """Mark done, tear down the worktree, and archive the worker file. Runs NO content
     git ops — commit, squash-merge, and handoff are the worker's own responsibility and
-    must happen before this."""
+    must happen before this.
+
+    Refuses to run while the worktree is dirty, so you never have to check first."""
     store = _store()
     callsign = _resolve_self(store)
     w = _load_worker(store, callsign)
+
+    # Check before mutating anything: a refusal must leave the worker fully intact.
+    if not force:
+        entries = worktree_mod.dirty_entries(Path(w.worktree)) if w.worktree else []
+        if entries:
+            console.print(f"[red]{callsign} has uncommitted changes — not tearing down.[/red]")
+            for line in entries[:DIRTY_PREVIEW_LIMIT]:
+                # markup=False: porcelain paths may contain [brackets] that would
+                # otherwise be parsed as style tags.
+                console.print(f"  {line}", markup=False, style="yellow")
+            if len(entries) > DIRTY_PREVIEW_LIMIT:
+                console.print(f"  [dim]… and {len(entries) - DIRTY_PREVIEW_LIMIT} more[/dim]")
+            console.print("\ncommit or stash your work, then re-run [bold]fleet done[/bold].")
+            console.print("to discard it instead: [bold]fleet done --force[/bold]")
+            raise typer.Exit(1)
+
     w.status = "done"
     w.updated = now_stamp()
 
@@ -322,7 +346,9 @@ def done() -> None:
 
     with store.lock():
         try:
-            get_provider(w.provider or "plain", store.repo_root).release(callsign, w.worktree or "")
+            get_provider(w.provider or "plain", store.repo_root).release(
+                callsign, w.worktree or "", force=force
+            )
         except WorktreeError as e:
             console.print(f"[yellow]worktree teardown warning: {e}[/yellow]")
         archive_path = store.archive_dir / f"{today_stamp()}-{callsign}.md"
