@@ -20,6 +20,9 @@ dependencies = [
     "rich>=13.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [project.urls]
 Homepage = "https://github.com/andrewguo/fleet-workflow"
 Repository = "https://github.com/andrewguo/fleet-workflow"
@@ -33,3 +36,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fleet"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Run against the working tree without requiring an editable install; `tests` is on
+# the path so the suite can import shared helpers from conftest.
+pythonpath = ["src", "tests"]
+addopts = "-q"

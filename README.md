@@ -107,6 +107,17 @@ fleet done                  # tear down + archive when finished
 untracked files — and lists what is at stake, so you never have to check before
 standing a worker down. Pass `--force` to discard the work deliberately.
 
+## Development
+
+```bash
+uv tool install --editable .
+python -m pytest
+```
+
+The suite drives the real CLI against throwaway git repos, with `FLEET_STATE_HOME`
+redirected into a tmp dir so it never touches your own fleet state. Tests live in
+`tests/` and are not shipped in the wheel.
+
 ## License
 
 MIT
