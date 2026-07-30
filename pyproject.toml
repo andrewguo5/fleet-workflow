@@ -24,8 +24,8 @@ dependencies = [
 dev = ["pytest>=8.0"]
 
 [project.urls]
-Homepage = "https://github.com/andrewguo/fleet-workflow"
-Repository = "https://github.com/andrewguo/fleet-workflow"
+Homepage = "https://github.com/andrewguo5/fleet-workflow"
+Repository = "https://github.com/andrewguo5/fleet-workflow"
 
 [project.scripts]
 fleet = "fleet.cli:app"
