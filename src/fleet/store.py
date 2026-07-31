@@ -49,19 +49,39 @@ def project_slug(cwd: Path | None = None) -> str:
     return str(repo_root(cwd)).replace("/", "-")
 
 
+DEFAULT_CONFIG_DIR = Path("~/.claude")
+
+
 def _state_home() -> Path:
     """Root under which each project's fleet state lives.
 
-    Honors ``FLEET_STATE_HOME``; otherwise prefers an existing ``~/.claude-work`` and
-    falls back to ``~/.claude``.
+    Follows ``CLAUDE_CONFIG_DIR`` — the same variable Claude Code and ``fleet init``
+    honor — so a work-scoped agent keeps its fleet state beside its own config rather
+    than in the personal one. ``FLEET_STATE_HOME`` overrides everything.
+
+    Earlier versions instead used ``~/.claude-work`` whenever that directory merely
+    existed, which put *every* project's state there regardless of which agent was
+    running. That is preserved only as a fallback for state already written that way,
+    so an upgrade does not appear to lose workers; new state follows the config dir.
     """
     override = os.environ.get("FLEET_STATE_HOME")
     if override:
         return Path(override).expanduser()
-    claude_work = Path("~/.claude-work/projects").expanduser()
-    if claude_work.parent.exists():
-        return claude_work
-    return Path("~/.claude/projects").expanduser()
+
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    if configured:
+        return Path(configured).expanduser() / "projects"
+    return DEFAULT_CONFIG_DIR.expanduser() / "projects"
+
+
+def legacy_state_home() -> Path | None:
+    """Where a pre-``CLAUDE_CONFIG_DIR`` version would have put state, if it exists.
+
+    Used by ``fleet migrate`` to find state stranded by the change, and by the store to
+    keep reading it until it is moved.
+    """
+    legacy = Path("~/.claude-work/projects").expanduser()
+    return legacy if legacy.parent.exists() else None
 
 
 class FleetStore:
@@ -71,6 +91,39 @@ class FleetStore:
         self.repo_root = repo_root(cwd)
         self.slug = str(self.repo_root).replace("/", "-")
         self.base = _state_home() / self.slug / "fleet"
+        # Keep serving state written by a pre-CLAUDE_CONFIG_DIR version until it is
+        # migrated: silently starting empty would look like every worker vanished.
+        if not self.base.exists():
+            legacy_root = legacy_state_home()
+            if legacy_root is not None:
+                legacy = legacy_root / self.slug / "fleet"
+                if legacy.exists():
+                    self.base = legacy
+
+    @property
+    def is_legacy_location(self) -> bool:
+        """Whether this store is currently *reading* from the legacy location."""
+        return self.base != self.intended_base()
+
+    def intended_base(self) -> Path:
+        """Where this project's state belongs under the current config."""
+        return _state_home() / self.slug / "fleet"
+
+    def legacy_base(self) -> Path | None:
+        """This project's legacy state directory, if one exists and is not already the
+        intended location.
+
+        Checked directly rather than inferred from ``base``: once state exists at the
+        destination the store stops falling back, but stranded legacy state may still
+        be sitting there and must not be reported as migrated.
+        """
+        legacy_root = legacy_state_home()
+        if legacy_root is None:
+            return None
+        legacy = legacy_root / self.slug / "fleet"
+        if legacy == self.intended_base() or not legacy.exists():
+            return None
+        return legacy
 
     # --- directory layout -------------------------------------------------
 

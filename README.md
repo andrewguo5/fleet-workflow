@@ -45,7 +45,12 @@ uv tool install --editable .        # or: pipx install --editable .
 ```
 
 State lives under `~/.claude/projects/<project-slug>/fleet/`, outside your repo, so every worktree shares one view and your repo stays
-clean. Set `FLEET_STATE_HOME` to relocate it.
+clean. It follows `CLAUDE_CONFIG_DIR` when that is set, so a work-scoped agent keeps its
+own fleet. Set `FLEET_STATE_HOME` to relocate it.
+
+Upgrading from a version that stored state under `~/.claude-work`? `fleet migrate`
+moves a project's state to wherever the current config dir puts it (`--dry-run` to
+preview). Until you do, the old location is still read, so nothing disappears.
 
 ## Choosing your agent
 
@@ -64,7 +69,7 @@ line for you to launch the agent yourself.
 ## Use
 
 New here? Run `fleet --guide` for a linear walkthrough in your terminal, or read
-[GUIDE.md](GUIDE.md). This section is the short form.
+[GUIDE.md](GUIDE.md) for the same thing on the page. This section is the short form.
 
 ```bash
 # once per project
@@ -100,6 +105,7 @@ fleet done                  # tear down + archive when finished
 |---|---|---|
 | `fleet --guide` | you | linear walkthrough for a first run |
 | `fleet init` | you | install prompts + scaffold state |
+| `fleet migrate [--dry-run]` | you | move state written by an older version |
 | `fleet recruit [--agent] [--provider]` | you | provision a worktree + launch a worker |
 | `fleet qm [--agent]` | you | launch the Quartermaster |
 | `fleet watch [--interval]` | you | live dashboard |

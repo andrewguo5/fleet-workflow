@@ -11,6 +11,7 @@ The engine owns every state mutation; agents only ever shell out to these comman
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from importlib import resources
 from pathlib import Path
@@ -159,6 +160,57 @@ def init(
         )
     console.print("  recruit your first worker with: [bold]fleet recruit --agent \"<your-agent-cmd>\"[/bold]")
     console.print("  new to fleet? [bold]fleet --guide[/bold] walks through the whole loop.")
+
+
+@app.command()
+def migrate(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would move, and change nothing."),
+) -> None:
+    """Move this project's fleet state to where the current config dir puts it.
+
+    State used to live under ``~/.claude-work`` whenever that directory merely existed,
+    regardless of which agent was running; it now follows ``CLAUDE_CONFIG_DIR``. This
+    relocates state written the old way. Copies first and only removes the source once
+    the copy is verified, so an interrupted run cannot lose a worker."""
+    store = _store()
+    destination = store.intended_base()
+    source = store.legacy_base()
+
+    if source is None:
+        console.print(f"[green]already in place[/green] — {destination}")
+        return
+
+    workers = sorted(p.name for p in (source / "workers").glob("*.md")) if (source / "workers").exists() else []
+    console.print(f"  from : {source}")
+    console.print(f"  to   : {destination}")
+    console.print(f"  workers: {', '.join(w.removesuffix('.md') for w in workers) or 'none'}")
+
+    if dry_run:
+        console.print("\n[dim]--dry-run: nothing moved.[/dim]")
+        return
+
+    if destination.exists() and any(destination.iterdir()):
+        _fail(
+            f"destination already has state: {destination}\n"
+            "merge it by hand, or move it aside, then re-run."
+        )
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, destination, dirs_exist_ok=True)
+
+    # Verify before deleting: every file in the source must exist at the destination.
+    missing = [
+        path.relative_to(source)
+        for path in source.rglob("*")
+        if path.is_file() and not (destination / path.relative_to(source)).exists()
+    ]
+    if missing:
+        _fail(
+            f"copy incomplete ({len(missing)} file(s) missing); source left untouched at {source}"
+        )
+
+    shutil.rmtree(source)
+    console.print(f"\n[green]migrated[/green] {len(workers)} worker(s) -> {destination}")
 
 
 @app.command()
