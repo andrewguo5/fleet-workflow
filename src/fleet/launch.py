@@ -9,6 +9,9 @@ resolve.
 
 If no agent command is configured, ``launch`` returns a ``cd`` hint for the caller to
 print instead of exec-ing.
+
+A worker's callsign is exported as ``$FLEET_CALLSIGN`` into the exec'd environment,
+so the session can identify itself without consulting fleet's state.
 """
 
 from __future__ import annotations
@@ -17,6 +20,8 @@ import os
 import shlex
 import subprocess
 from pathlib import Path
+
+from .statusline import CALLSIGN_ENV_VAR
 
 # Seconds to let the shell start up and resolve the command. Generous: an interactive
 # shell sources the user's whole profile, which can be slow on a cold cache.
@@ -55,9 +60,19 @@ def can_launch(agent_cmd: str) -> bool:
     return result.returncode == 0
 
 
-def launch(directory: Path, agent_cmd: str | None, initial_prompt: str | None = None) -> str | None:
+def launch(
+    directory: Path,
+    agent_cmd: str | None,
+    initial_prompt: str | None = None,
+    callsign: str | None = None,
+) -> str | None:
     """Exec the agent in ``directory``. Never returns on success (the process is
-    replaced). Returns a ``cd`` hint string when no agent command is available."""
+    replaced). Returns a ``cd`` hint string when no agent command is available.
+
+    ``callsign`` is exported as ``$FLEET_CALLSIGN`` so the session can name itself —
+    the status-line badge reads it, and it beats inferring identity from the
+    directory name under a provider that does not name worktrees after callsigns.
+    """
     directory = directory.resolve()
     if not agent_cmd:
         return f"cd {shlex.quote(str(directory))}   # then start your coding agent here"
@@ -68,6 +83,9 @@ def launch(directory: Path, agent_cmd: str | None, initial_prompt: str | None = 
     script = f"cd {shlex.quote(str(directory))} && {inner}"
 
     shell = _shell()
-    os.execvp(shell, [shell, "-i", "-c", script])
+    env = os.environ.copy()
+    if callsign:
+        env[CALLSIGN_ENV_VAR] = callsign
+    os.execvpe(shell, [shell, "-i", "-c", script], env)
     # unreachable
     return None

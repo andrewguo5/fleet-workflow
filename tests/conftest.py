@@ -8,6 +8,7 @@ suite fast and gives us the exit code and output directly.
 
 from __future__ import annotations
 
+import random
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from fleet import callsign as callsign_mod
 from fleet.cli import app
 from fleet.store import FleetStore
 
@@ -24,6 +26,10 @@ GIT_ENV = {
     "GIT_COMMITTER_NAME": "Fleet Test",
     "GIT_COMMITTER_EMAIL": "test@fleet.invalid",
 }
+
+# Any fixed value works; this one is arbitrary. What matters is that allocation
+# is reseeded per test so the suite never depends on run-to-run luck.
+CALLSIGN_SEED = 20260731
 
 
 def git(*args: str, cwd: Path) -> str:
@@ -61,6 +67,47 @@ def isolated_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # never writes prompts into the developer's real ~/.claude or ~/.claude-work.
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
     return state_home
+
+
+@pytest.fixture(autouse=True)
+def predictable_callsigns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make random callsign allocation repeatable within a test.
+
+    Production draws callsigns at random so a fleet does not always open with the
+    same two workers. Tests still need to name the worker they just recruited, so
+    the global RNG is reseeded to a fixed value: allocation stays exercised for
+    real, but the sequence is identical on every run. Use `recruited()` to learn
+    which callsign a recruit produced rather than hardcoding one.
+    """
+    monkeypatch.setattr(callsign_mod, "random", random.Random(CALLSIGN_SEED))
+
+
+def occupy_callsigns(store, names) -> None:
+    """Fill roster slots with stub worker files, no worktree provisioning.
+
+    Cheaper than recruiting for real, and it lets a test control which callsigns
+    remain free — the only way to steer a random allocator toward a chosen name.
+    """
+    store.ensure_dirs()
+    for name in names:
+        store.worker_path(name).write_text(
+            f"---\nworker: {name}\nstatus: running\n---\n", encoding="utf-8"
+        )
+
+
+@pytest.fixture
+def live_callsigns(store):
+    """The callsigns currently live, alphabetically — who the recruits actually got.
+
+    Not recruit order: the store lists workers by filename. A test that recruits
+    one worker can take `live_callsigns()[0]`; one that recruits several and
+    cares which came first should capture each callsign as it goes.
+    """
+
+    def live() -> list[str]:
+        return store.live_callsigns()
+
+    return live
 
 
 @pytest.fixture

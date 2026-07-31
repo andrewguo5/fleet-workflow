@@ -15,16 +15,23 @@ import pytest
 from fleet.cli import DIRTY_PREVIEW_LIMIT
 from fleet.worktree import DirtyWorktreeError, PlainGit, dirty_entries
 
-from conftest import git
+from fleet.callsign import NATO_ALPHABET
+
+from conftest import git, occupy_callsigns
 
 
 @pytest.fixture
-def recruited(repo: Path, fleet, worktree_of):
-    """A repo with one recruited worker, and the path to its worktree."""
+def recruited(repo: Path, fleet, worktree_of, store):
+    """A repo with one recruited worker, and the path to its worktree.
+
+    The callsign is drawn at random, so it is read back from the store rather
+    than assumed.
+    """
     fleet("init", cwd=repo)
     result = fleet("recruit", cwd=repo)
     assert result.ok, result.output
-    return worktree_of("alpha")
+    (callsign,) = store.live_callsigns()
+    return worktree_of(callsign)
 
 
 # --------------------------------------------------------------------------
@@ -81,11 +88,12 @@ def test_committed_work_tears_down(recruited: Path, fleet):
 def test_refusal_leaves_worker_live(recruited: Path, fleet, store):
     """A blocked teardown must not half-apply: the worker file is untouched."""
     (recruited / "scratch.txt").write_text("notes\n", encoding="utf-8")
-    before = store.worker_path("alpha").read_text(encoding="utf-8")
+    worker_file = store.worker_path(recruited.name)
+    before = worker_file.read_text(encoding="utf-8")
 
     fleet("done", cwd=recruited)
 
-    assert store.worker_path("alpha").read_text(encoding="utf-8") == before
+    assert worker_file.read_text(encoding="utf-8") == before
     assert "status: done" not in before
 
 
@@ -129,7 +137,7 @@ def test_teardown_preserves_branch(recruited: Path, fleet, repo: Path):
 
     fleet("done", cwd=recruited)
 
-    assert "fleet/alpha" in git("branch", "--list", "fleet/*", cwd=repo)
+    assert f"fleet/{recruited.name}" in git("branch", "--list", "fleet/*", cwd=repo)
 
 
 def test_teardown_archives_worker(recruited: Path, fleet, store):
@@ -137,19 +145,28 @@ def test_teardown_archives_worker(recruited: Path, fleet, store):
 
     fleet("done", cwd=recruited)
 
-    archived = list(store.archive_dir.glob("*-alpha.md"))
+    archived = list(store.archive_dir.glob(f"*-{recruited.name}.md"))
     assert len(archived) == 1
     assert "status: done" in archived[0].read_text(encoding="utf-8")
-    assert not store.worker_path("alpha").exists()
+    assert not store.worker_path(recruited.name).exists()
 
 
-def test_callsign_is_reusable_after_teardown(recruited: Path, fleet, repo: Path):
+def test_callsign_is_reusable_after_teardown(recruited: Path, fleet, repo: Path, store):
+    """A torn-down callsign returns to the pool and can be drawn again.
+
+    Every other slot is filled after teardown so the freed name is the only one
+    left — otherwise a random draw would prove nothing about reuse.
+    """
+    freed = recruited.name
     git("commit", "-q", "--allow-empty", "-m", "work", cwd=recruited)
     fleet("done", cwd=recruited)
+    assert freed not in store.live_callsigns()
 
+    occupy_callsigns(store, [c for c in NATO_ALPHABET if c != freed])
     result = fleet("recruit", cwd=repo)
 
-    assert "alpha" in result.output
+    assert result.ok, result.output
+    assert freed in result.output
 
 
 # --------------------------------------------------------------------------

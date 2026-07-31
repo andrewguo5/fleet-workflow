@@ -19,10 +19,10 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from . import guide, mailbox, status
+from . import guide, mailbox, status, statusline
 from . import launch as launch_mod
 from . import worktree as worktree_mod
-from .callsign import FleetFullError, next_available
+from .callsign import FleetFullError, pick_available
 from .store import FleetStore, NotAGitRepoError, _run_git
 from .worker import Worker, now_stamp, today_stamp
 from .worktree import WorktreeError, get_provider
@@ -236,7 +236,7 @@ def recruit(
 
     with store.lock():
         try:
-            callsign = next_available(store.live_callsigns())
+            callsign = pick_available(store.live_callsigns())
         except FleetFullError as e:
             _fail(str(e))
         try:
@@ -254,11 +254,13 @@ def recruit(
         )
         store.atomic_write(store.worker_path(callsign), stub.render())
 
+    statusline.install(Path(wt), callsign)
+
     console.print(f"[green]recruited[/green] [bold]{callsign}[/bold]")
     console.print(f"  branch   : fleet/{callsign}")
     console.print(f"  worktree : {wt}")
 
-    hint = launch_mod.launch(Path(wt), resolved_agent)
+    hint = launch_mod.launch(Path(wt), resolved_agent, callsign=callsign)
     if hint:
         console.print("  no --agent given; open your agent yourself:")
         console.print(f"    [bold]{hint}[/bold]")
