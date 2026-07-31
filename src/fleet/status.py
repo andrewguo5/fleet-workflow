@@ -59,6 +59,59 @@ def _fmt_age(minutes: int | None) -> str:
     return f"{hours:.0f}h" if hours < 24 else f"{hours / 24:.0f}d"
 
 
+def build_listing(store: FleetStore) -> Group:
+    """A compact one-line-per-worker roster.
+
+    ``build_table`` is the supervisory view — wide, and it wraps hard in a narrow
+    terminal. This is the "who is out there right now" answer: aligned, scannable, and
+    short enough to sit in scrollback next to other commands.
+    """
+    workers = load_workers(store)
+    if not workers:
+        return Group(Text("no workers recruited yet", style="dim"))
+
+    callsign_width = max(len(w.worker) for w in workers)
+    status_width = max(len(w.status or "?") for w in workers)
+
+    lines: list[Text] = []
+    for w in workers:
+        status = w.status or "?"
+        line = Text()
+        line.append(f"{w.worker:<{callsign_width}}  ", style="bold")
+        line.append(f"{status:<{status_width}}  ", style=_STATUS_STYLE.get(status, ""))
+        line.append(f"{_fmt_age(_age_minutes(w.updated)):>4}  ", style="dim")
+        line.append(w.thread or "—")
+        unread = mailbox.unread_count(store, w.worker)
+        if unread:
+            line.append(f"  ({unread} unread)", style="bold magenta")
+        if is_stale(w):
+            line.append("  stale", style="red")
+        lines.append(line)
+    return Group(*lines)
+
+
+def porcelain_listing(store: FleetStore) -> str:
+    """Tab-separated roster for scripts and agents: callsign, status, stage, thread.
+
+    Stable and unstyled by contract — the Quartermaster and shell pipelines parse this,
+    so columns are never reordered and empty fields are written as '-' rather than
+    omitted, keeping the field count fixed.
+    """
+    rows = []
+    for w in load_workers(store):
+        rows.append(
+            "\t".join(
+                (
+                    w.worker,
+                    w.status or "-",
+                    w.stage or "-",
+                    w.thread or "-",
+                )
+            )
+        )
+    return "\n".join(rows)
+
+
 def build_table(store: FleetStore) -> Table:
     workers = load_workers(store)
     table = Table(title="fleet — quartermaster view", title_style="bold", expand=True)

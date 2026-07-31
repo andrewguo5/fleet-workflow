@@ -90,8 +90,12 @@ SECTIONS: tuple[Section, ...] = (
                 note="Queues a directive. It lands in alpha's mailbox without interrupting it.",
             ),
             Step(
+                command="fleet ls",
+                note="Quick roster: one line per worker, prints and exits. Add --porcelain to pipe it.",
+            ),
+            Step(
                 command="fleet status",
-                note="One-shot readout when you don't want a live view.",
+                note="Fuller one-shot readout when you want each worker's detail.",
             ),
         ),
     ),

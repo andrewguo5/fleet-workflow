@@ -103,6 +103,7 @@ fleet done                  # tear down + archive when finished
 | `fleet recruit [--agent] [--provider]` | you | provision a worktree + launch a worker |
 | `fleet qm [--agent]` | you | launch the Quartermaster |
 | `fleet watch [--interval]` | you | live dashboard |
+| `fleet ls [--porcelain]` | you / QM | compact one-line-per-worker roster |
 | `fleet status [--verbose]` | QM | one-shot readout |
 | `fleet inspect <callsign>` | QM | one worker's full file + mail |
 | `fleet msg <callsign\|all> "…"` | QM | async directive to a worker |

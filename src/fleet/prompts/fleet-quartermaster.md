@@ -13,6 +13,9 @@ own any worktree.
 
 Read the fleet, never guess:
 
+- `fleet ls` — the roster at a glance, one line per worker. `fleet ls --porcelain` is
+  tab-separated (callsign, status, stage, thread) when you want to scan or filter it
+  programmatically.
 - `fleet status --verbose` — every worker's stage, status, next step, and the Task /
   Observations / Complaints / Question each has surfaced.
 - `fleet inspect <callsign>` — one worker's full file plus its mail trail.
