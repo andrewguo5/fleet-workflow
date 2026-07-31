@@ -140,10 +140,8 @@ SECTIONS: tuple[Section, ...] = (
 
 CLOSING = (
     "State lives outside your repo, so every worktree shares one view:\n"
-    "  $CLAUDE_CONFIG_DIR/projects/<project-slug>/fleet/   (default ~/.claude;"
+    "  ~/.claude/projects/<project-slug>/fleet/   (follows CLAUDE_CONFIG_DIR;"
     " FLEET_STATE_HOME overrides)\n\n"
-    "It follows the config dir, so a work-scoped agent keeps its own fleet. Use one\n"
-    "agent per repo — mixing them gives that repo two fleets that cannot see each other.\n\n"
     "Worktrees are created next to your repo, at ../wt/<callsign>.\n"
     "Run [bold]fleet --help[/bold] for the full command reference."
 )

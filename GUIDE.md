@@ -131,8 +131,8 @@ fleet done             # retire a finished worker (from its own session)
 State lives outside your repo, so worktrees share one view and your repo stays clean:
 
 ```
-~/.claude-work/projects/<project-slug>/fleet/
+~/.claude/projects/<project-slug>/fleet/
 ```
 
-Set `FLEET_STATE_HOME` to relocate it. Worktrees are created next to your repo in
-`../wt/<callsign>`.
+It follows `CLAUDE_CONFIG_DIR` when that is set. Set `FLEET_STATE_HOME` to relocate it.
+Worktrees are created next to your repo in `../wt/<callsign>`.
