@@ -59,11 +59,11 @@ SECTIONS: tuple[Section, ...] = (
     ),
     Section(
         title="2. Start a worker",
-        blurb="Each worker gets its own callsign, branch, and isolated worktree.",
+        blurb="Each worker gets its own callsign, branch, and isolated worktree. Claude Code sessions show the callsign in their status line, so split panes stay tellable apart.",
         steps=(
             Step(
                 command="fleet recruit",
-                note="Takes the next callsign (alpha), provisions ../wt/alpha on branch fleet/alpha, and launches your agent there.",
+                note="Draws a free callsign at random (say delta), provisions ../wt/delta on branch fleet/delta, and launches your agent there.",
                 where="your project root",
             ),
             Step(

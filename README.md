@@ -23,8 +23,10 @@ LLM dump below, with my editorials in (a.g. ... ) (those are my initials, not la
 
 ### Roles
 
-- **Workers** — agents, each in its own worktree, holding a NATO callsign (`alpha`,
-  `bravo`, …). Each self-manages its lane and owns all of its own git operations.
+- **Workers** — agents, each in its own worktree, holding a NATO callsign drawn at
+  random (`delta`, `romeo`, …). Each self-manages its lane and owns all of its own
+  git operations. Claude Code workers show their callsign in the status line, so
+  split panes stay tellable apart.
 - **Quartermaster** (`fleet qm`) — a manager agent that reads every worker's context,
   summarizes for you, relays your directives down, and tells you who needs attention.
 - **Dashboard** (`fleet watch`) — a live, read-only, at-a-glance board.

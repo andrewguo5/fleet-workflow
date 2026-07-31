@@ -42,9 +42,14 @@ directory. Safe to re-run.
 fleet recruit
 ```
 
-Assigns the first free callsign (`alpha`), creates an isolated worktree at
-`../wt/alpha` on a new `fleet/alpha` branch, and launches your agent inside it. Your
-current terminal *becomes* that agent session.
+Draws a free NATO callsign at random (say `delta`), creates an isolated worktree at
+`../wt/delta` on a new `fleet/delta` branch, and launches your agent inside it. Your
+current terminal *becomes* that agent session. `fleet ls` tells you who you got.
+
+Claude Code sessions show their callsign in the status line (`⬢ delta`), so agents
+stay tellable apart when several share a window in split panes. The callsign is also
+exported as `$FLEET_CALLSIGN`. The status line is scoped to the worktree — your own
+`~/.claude/settings.json` is left alone.
 
 ```
 > /fleet-start
