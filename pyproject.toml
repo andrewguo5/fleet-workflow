@@ -1,6 +1,6 @@
 [project]
 name = "fleet-workflow"
-version = "0.1.0"
+version = "0.2.0"
 description = "A portable workflow for managing a fleet of parallel coding agents, each in its own git worktree, coordinated by a Quartermaster."
 readme = "README.md"
 requires-python = ">=3.11"

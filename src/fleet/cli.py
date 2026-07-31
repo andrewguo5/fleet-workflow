@@ -218,7 +218,7 @@ def recruit(
     agent: str = typer.Option(None, "--agent", help="Command that opens your coding agent, e.g. 'claude' or 'claude-work'. Falls back to $FLEET_AGENT."),
     provider: str = typer.Option("plain", "--provider", help="Worktree backend: plain | treehouse."),
 ) -> None:
-    """Assign the next callsign, provision an isolated worktree+branch, write a worker
+    """Draw a free callsign at random, provision an isolated worktree+branch, write a worker
     stub, then chdir into the worktree and launch your agent there."""
     store = _store()
     store.ensure_dirs()
