@@ -57,8 +57,9 @@ def isolated_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     state_home = tmp_path / "state"
     monkeypatch.setenv("FLEET_STATE_HOME", str(state_home))
     monkeypatch.delenv("FLEET_AGENT", raising=False)
-    # init writes the prompt pack to a module-level constant, not an env var.
-    monkeypatch.setattr("fleet.cli.COMMANDS_DIR", tmp_path / "commands")
+    # init resolves its install dir from CLAUDE_CONFIG_DIR; redirect it so the suite
+    # never writes prompts into the developer's real ~/.claude or ~/.claude-work.
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
     return state_home
 
 

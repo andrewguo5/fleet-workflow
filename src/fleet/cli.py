@@ -33,8 +33,22 @@ app = typer.Typer(
 )
 console = Console()
 
-COMMANDS_DIR = Path("~/.claude/commands").expanduser()
+DEFAULT_CONFIG_DIR = Path("~/.claude")
 COMMAND_PROMPTS = ("fleet-start.md", "fleet-quartermaster.md")
+
+
+def commands_dir() -> Path:
+    """Where the slash-command prompts belong, for the agent that is running.
+
+    Honors ``CLAUDE_CONFIG_DIR`` the way Claude Code itself does, so a wrapper like
+    ``claude-work () { CLAUDE_CONFIG_DIR=~/.claude-work command claude "$@" }`` installs
+    the prompts into the config it will actually read. Resolved per call, not at import,
+    because the environment differs between the shell that ran ``fleet`` and any agent
+    session it later launches.
+    """
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    base = Path(configured) if configured else DEFAULT_CONFIG_DIR
+    return base.expanduser() / "commands"
 
 # How many dirty paths `fleet done` lists before collapsing the rest into a count.
 DIRTY_PREVIEW_LIMIT = 10
@@ -112,22 +126,37 @@ def _agent_cmd(agent: str | None) -> str | None:
 # --------------------------------------------------------------------------
 
 @app.command()
-def init() -> None:
-    """Install the prompt pack into ~/.claude/commands and scaffold this project's
-    fleet state directory. Idempotent."""
+def init(
+    commands_dir_override: str = typer.Option(
+        None,
+        "--commands-dir",
+        help="Where to install the slash-command prompts. Defaults to $CLAUDE_CONFIG_DIR/commands, else ~/.claude/commands.",
+    ),
+) -> None:
+    """Install the prompt pack for the agent you're running and scaffold this project's
+    fleet state directory. Idempotent.
+
+    The prompts go to ``$CLAUDE_CONFIG_DIR/commands`` when that is set, so running this
+    from a work-scoped agent installs them where that agent will look."""
     store = _store()
     store.ensure_dirs()
 
-    COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
+    target = Path(commands_dir_override).expanduser() if commands_dir_override else commands_dir()
+    target.mkdir(parents=True, exist_ok=True)
     prompts = resources.files("fleet") / "prompts"
     for name in COMMAND_PROMPTS:
-        (COMMANDS_DIR / name).write_text((prompts / name).read_text(encoding="utf-8"), encoding="utf-8")
+        (target / name).write_text((prompts / name).read_text(encoding="utf-8"), encoding="utf-8")
     # Protocol doc lives with the project's fleet state, not as a slash-command.
     store.atomic_write(store.base / "FLEET.md", (prompts / "FLEET.md").read_text(encoding="utf-8"))
 
     console.print(f"[green]fleet initialized[/green] for [bold]{store.repo_root}[/bold]")
     console.print(f"  state dir : {store.base}")
-    console.print(f"  commands  : {COMMANDS_DIR}/{{{', '.join(COMMAND_PROMPTS)}}}")
+    console.print(f"  commands  : {target}/{{{', '.join(COMMAND_PROMPTS)}}}")
+    if not commands_dir_override and not os.environ.get("CLAUDE_CONFIG_DIR"):
+        console.print(
+            "  [dim]running a work/personal-scoped agent? re-run init from that session,[/dim]\n"
+            "  [dim]or pass --commands-dir, so the prompts land where it reads them.[/dim]"
+        )
     console.print("  recruit your first worker with: [bold]fleet recruit --agent \"<your-agent-cmd>\"[/bold]")
     console.print("  new to fleet? [bold]fleet --guide[/bold] walks through the whole loop.")
 
@@ -222,6 +251,29 @@ def watch(
 # --------------------------------------------------------------------------
 # quartermaster commands
 # --------------------------------------------------------------------------
+
+@app.command(name="ls")
+@app.command(name="list")
+def list_cmd(
+    porcelain: bool = typer.Option(
+        False,
+        "--porcelain",
+        help="Tab-separated (callsign, status, stage, thread) for scripts. Stable output.",
+    ),
+) -> None:
+    """List the active workers, one per line, and exit.
+
+    The quick 'who is out there' answer. ``fleet status`` is the fuller board and
+    ``fleet watch`` the live one."""
+    store = _store()
+    if porcelain:
+        listing = status.porcelain_listing(store)
+        if listing:
+            # print, not console.print: no wrapping or markup in parsed output.
+            print(listing)
+        return
+    console.print(status.build_listing(store))
+
 
 @app.command(name="status")
 def status_cmd(
