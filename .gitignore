@@ -5,3 +5,6 @@ build/
 dist/
 .venv/
 .DS_Store
+
+# session handoff (development artifact, not shipped)
+HANDOFF.md

@@ -33,8 +33,9 @@ cd ~/your-project
 fleet init
 ```
 
-Installs the prompt pack into `~/.claude/commands` and scaffolds this project's state
-directory. Safe to re-run.
+Installs the prompt pack into `~/.claude/commands` (or `$CLAUDE_CONFIG_DIR/commands`, so
+run it from the agent you'll use) and scaffolds this project's state directory. Safe to
+re-run.
 
 ## Start your first worker
 
