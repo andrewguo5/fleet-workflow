@@ -117,8 +117,15 @@ work is merged and it's ready to stand down, **inside that worker's session**:
 fleet done
 ```
 
-Tears down the worktree and archives the record. The `fleet/alpha` branch is left
-alone, and the callsign is freed for reuse.
+Marks the worker `standing-down`. **Your worktree is still there afterwards — that is
+correct, not a failure.** `fleet done` runs from inside the worktree, and deleting a
+directory out from under the session standing in it leaves that session unable to spawn
+anything at all. So the delete waits: once you exit, the next `fleet` command anyone runs
+releases the worktree, archives the record, and frees the callsign. The `fleet/alpha`
+branch is left alone either way.
+
+Use `fleet dismiss <callsign>` from outside the worktree when you want teardown to happen
+immediately — that path is for worktrees nobody is inside, so it doesn't wait.
 
 If there are uncommitted changes, this **refuses and shows you what's uncommitted** —
 you never need to check first. Commit or stash, then re-run. To discard the work
