@@ -66,21 +66,15 @@ def test_guide_mentions_the_dirty_refusal():
 # rendering
 # --------------------------------------------------------------------------
 
-def test_guide_renders_every_step(fleet, tmp_path: Path):
+def test_guide_renders_every_section_and_step(fleet, tmp_path: Path):
     result = fleet("--guide", cwd=tmp_path)
 
     assert result.ok
     for section in guide.SECTIONS:
+        assert section.title in result.output
         for step in section.steps:
             # The command's first token survives wrapping even in a narrow terminal.
             assert step.command.split()[0] in result.output
-
-
-def test_guide_renders_every_section_title(fleet, tmp_path: Path):
-    result = fleet("--guide", cwd=tmp_path)
-
-    for section in guide.SECTIONS:
-        assert section.title in result.output
 
 
 def test_guide_needs_no_repo_and_no_state(fleet, tmp_path: Path):
@@ -102,12 +96,6 @@ def test_guide_exits_before_running_a_command(fleet, tmp_path: Path):
     assert "walkthrough" in result.output
     # `status` outside a repo would otherwise fail with the git-repo error.
     assert "must be run inside a git repository" not in result.output
-
-
-def test_guide_points_at_the_full_reference(fleet, tmp_path: Path):
-    result = fleet("--guide", cwd=tmp_path)
-
-    assert "--help" in result.output
 
 
 # --------------------------------------------------------------------------

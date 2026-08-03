@@ -7,6 +7,8 @@ colons, quoting round-trips, and unknown keys written by a future version.
 
 from __future__ import annotations
 
+import pytest
+
 from fleet.worker import SECTION_ORDER, Worker
 
 
@@ -30,24 +32,18 @@ def test_round_trips_scalar_fields():
     assert result.thread == "auth"
 
 
-def test_round_trips_a_value_containing_a_colon():
-    """Next steps read like prose and routinely contain ': '."""
-    original = Worker(worker="alpha", next_step="fix: the parser")
-
-    assert render_parse(original).next_step == "fix: the parser"
-
-
-def test_round_trips_a_value_containing_quotes():
-    original = Worker(worker="alpha", thread='the "hard" one')
-
-    assert render_parse(original).thread == 'the "hard" one'
-
-
-def test_round_trips_a_windows_path():
-    """Backslashes must survive quoting; escaping is hand-rolled."""
-    original = Worker(worker="alpha", worktree=r"C:\repos\wt\alpha")
-
-    assert render_parse(original).worktree == r"C:\repos\wt\alpha"
+@pytest.mark.parametrize(
+    "value",
+    [
+        "fix: the parser",          # next steps read like prose and contain ': '
+        'the "hard" one',
+        r"C:\repos\wt\alpha",       # backslashes, against hand-rolled escaping
+    ],
+    ids=["colon", "quotes", "backslashes"],
+)
+def test_round_trips_awkward_values(value: str):
+    """Quoting is hand-rolled, so anything that could break it round-trips here."""
+    assert render_parse(Worker(worker="alpha", thread=value)).thread == value
 
 
 def test_omits_unset_fields():

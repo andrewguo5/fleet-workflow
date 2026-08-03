@@ -54,28 +54,16 @@ def test_resolution_checks_only_the_binary_not_its_arguments():
 # prevention: nothing is provisioned when the agent cannot start
 # --------------------------------------------------------------------------
 
-def test_recruit_fails_before_provisioning(initialized: Path, fleet):
+def test_recruit_fails_before_provisioning_anything(initialized: Path, fleet, store):
+    """launch() execs and never returns, so an unresolvable agent has to be caught up
+    front — otherwise it strands a worker holding a worktree with no agent in it.
+    Nothing may survive the failure: no worktree, no worker file, no branch."""
     result = fleet("recruit", "--agent", UNRESOLVABLE, cwd=initialized)
 
     assert result.exit_code == 1
     assert "not found" in result.output
-
-
-def test_failed_recruit_leaves_no_worktree(initialized: Path, fleet):
-    fleet("recruit", "--agent", UNRESOLVABLE, cwd=initialized)
-
     assert not (initialized.parent / "wt").exists()
-
-
-def test_failed_recruit_leaves_no_worker(initialized: Path, fleet, store):
-    fleet("recruit", "--agent", UNRESOLVABLE, cwd=initialized)
-
     assert store.live_callsigns() == []
-
-
-def test_failed_recruit_leaves_no_branch(initialized: Path, fleet):
-    fleet("recruit", "--agent", UNRESOLVABLE, cwd=initialized)
-
     assert git("branch", "--list", "fleet/*", cwd=initialized) == ""
 
 
@@ -122,32 +110,20 @@ def stranded(initialized: Path, fleet, worktree_of, store):
     return worktree_of(callsign)
 
 
-def test_dismiss_removes_the_worktree(stranded: Path, fleet, initialized: Path):
+def test_dismiss_tears_down_from_the_repo_root(stranded: Path, fleet, initialized: Path, store):
+    """The whole point: `done` needs to run inside the worktree, `dismiss` does not.
+    Teardown removes the worktree and archives the record, but keeps the branch — the
+    commits are the one thing recovery must never discard."""
     result = fleet("dismiss", stranded.name, cwd=initialized)
 
     assert result.ok, result.output
     assert not stranded.exists()
-
-
-def test_dismiss_works_from_the_repo_root(stranded: Path, fleet, initialized: Path, store):
-    """The whole point: `done` needs the worktree, `dismiss` does not."""
-    fleet("dismiss", stranded.name, cwd=initialized)
-
     assert store.live_callsigns() == []
-
-
-def test_dismiss_archives_the_record(stranded: Path, fleet, initialized: Path, store):
-    fleet("dismiss", stranded.name, cwd=initialized)
+    assert f"fleet/{stranded.name}" in git("branch", "--list", "fleet/*", cwd=initialized)
 
     archived = list(store.archive_dir.glob(f"*-{stranded.name}.md"))
     assert len(archived) == 1
     assert "status: done" in archived[0].read_text(encoding="utf-8")
-
-
-def test_dismiss_preserves_the_branch(stranded: Path, fleet, initialized: Path):
-    fleet("dismiss", stranded.name, cwd=initialized)
-
-    assert f"fleet/{stranded.name}" in git("branch", "--list", "fleet/*", cwd=initialized)
 
 
 def test_dismiss_frees_the_callsign(stranded: Path, fleet, initialized: Path, store):
@@ -159,7 +135,8 @@ def test_dismiss_frees_the_callsign(stranded: Path, fleet, initialized: Path, st
 
 
 def test_dismiss_refuses_a_dirty_worktree(stranded: Path, fleet, initialized: Path):
-    """Recovery must not become a way to lose work by accident."""
+    """Recovery must not become a way to lose work by accident, and the retry advice
+    has to name the command you actually ran, not `fleet done`."""
     (stranded / "scratch.txt").write_text("notes\n", encoding="utf-8")
 
     result = fleet("dismiss", stranded.name, cwd=initialized)
@@ -167,14 +144,6 @@ def test_dismiss_refuses_a_dirty_worktree(stranded: Path, fleet, initialized: Pa
     assert result.exit_code == 1
     assert "scratch.txt" in result.output
     assert stranded.exists()
-
-
-def test_dismiss_refusal_names_itself_in_the_retry_hint(stranded: Path, fleet, initialized: Path):
-    """The advice has to be the command you actually ran, not `fleet done`."""
-    (stranded / "scratch.txt").write_text("notes\n", encoding="utf-8")
-
-    result = fleet("dismiss", stranded.name, cwd=initialized)
-
     assert f"fleet dismiss {stranded.name}" in result.output
 
 

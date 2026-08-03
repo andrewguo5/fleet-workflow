@@ -56,26 +56,15 @@ def test_badge_is_executable(worker: Path):
     assert (worker / BADGE_PATH).stat().st_mode & 0o111
 
 
-def test_badge_prints_the_callsign_from_the_environment(worker: Path):
-    """The authoritative source: fleet exports it, so no inference is needed."""
-    output = run_badge(worker, env={CALLSIGN_ENV_VAR: "zulu", "PATH": "/usr/bin:/bin"})
+def test_badge_prefers_the_exported_callsign(worker: Path):
+    """$FLEET_CALLSIGN is authoritative — a provider whose worktree is not named after
+    the callsign must not mislead — but the directory name is a usable fallback for a
+    resumed shell that never got the export."""
+    exported = run_badge(worker, env={CALLSIGN_ENV_VAR: "romeo", "PATH": "/usr/bin:/bin"})
+    assert "romeo" in exported
+    assert worker.name not in exported
 
-    assert "zulu" in output
-
-
-def test_badge_falls_back_to_the_directory_name(worker: Path):
-    """Without the env var — a resumed shell, or a provider that renames worktrees."""
-    output = run_badge(worker, env={"PATH": "/usr/bin:/bin"})
-
-    assert worker.name in output
-
-
-def test_environment_wins_over_the_directory_name(worker: Path):
-    """A provider whose worktree is not named after the callsign must not mislead."""
-    output = run_badge(worker, env={CALLSIGN_ENV_VAR: "romeo", "PATH": "/usr/bin:/bin"})
-
-    assert "romeo" in output
-    assert worker.name not in output
+    assert worker.name in run_badge(worker, env={"PATH": "/usr/bin:/bin"})
 
 
 # --------------------------------------------------------------------------

@@ -38,34 +38,36 @@ def recruited(repo: Path, fleet, worktree_of, store):
 # what counts as dirty
 # --------------------------------------------------------------------------
 
-def test_untracked_file_blocks_teardown(recruited: Path, fleet):
-    """The original data-loss case: a scratch file the worker never staged."""
-    (recruited / "scratch.txt").write_text("notes\n", encoding="utf-8")
+def dirty_untracked(worktree: Path) -> str:
+    """A scratch file the worker never staged — the original data-loss case."""
+    (worktree / "scratch.txt").write_text("notes\n", encoding="utf-8")
+    return "scratch.txt"
+
+
+def dirty_unstaged(worktree: Path) -> str:
+    (worktree / "README.md").write_text("# edited\n", encoding="utf-8")
+    return "README.md"
+
+
+def dirty_staged(worktree: Path) -> str:
+    (worktree / "feature.py").write_text("x = 1\n", encoding="utf-8")
+    git("add", "feature.py", cwd=worktree)
+    return "feature.py"
+
+
+@pytest.mark.parametrize(
+    "make_dirty", [dirty_untracked, dirty_unstaged, dirty_staged],
+    ids=["untracked", "unstaged", "staged"],
+)
+def test_uncommitted_work_blocks_teardown(recruited: Path, fleet, make_dirty):
+    """Every kind of dirt counts, and the refusal names the file at stake."""
+    at_stake = make_dirty(recruited)
 
     result = fleet("done", cwd=recruited)
 
     assert result.exit_code == 1
     assert "uncommitted changes" in result.output
-    assert "scratch.txt" in result.output
-
-
-def test_unstaged_modification_blocks_teardown(recruited: Path, fleet):
-    (recruited / "README.md").write_text("# edited\n", encoding="utf-8")
-
-    result = fleet("done", cwd=recruited)
-
-    assert result.exit_code == 1
-    assert "README.md" in result.output
-
-
-def test_staged_change_blocks_teardown(recruited: Path, fleet):
-    (recruited / "feature.py").write_text("x = 1\n", encoding="utf-8")
-    git("add", "feature.py", cwd=recruited)
-
-    result = fleet("done", cwd=recruited)
-
-    assert result.exit_code == 1
-    assert "feature.py" in result.output
+    assert at_stake in result.output
 
 
 def test_committed_work_tears_down(recruited: Path, fleet):
@@ -85,8 +87,9 @@ def test_committed_work_tears_down(recruited: Path, fleet):
 # a refusal must change nothing
 # --------------------------------------------------------------------------
 
-def test_refusal_leaves_worker_live(recruited: Path, fleet, store):
-    """A blocked teardown must not half-apply: the worker file is untouched."""
+def test_refusal_changes_nothing(recruited: Path, fleet, store):
+    """A blocked teardown must not half-apply: worker file, worktree, and the work
+    itself all survive untouched."""
     (recruited / "scratch.txt").write_text("notes\n", encoding="utf-8")
     worker_file = store.worker_path(recruited.name)
     before = worker_file.read_text(encoding="utf-8")
@@ -95,13 +98,6 @@ def test_refusal_leaves_worker_live(recruited: Path, fleet, store):
 
     assert worker_file.read_text(encoding="utf-8") == before
     assert "status: done" not in before
-
-
-def test_refusal_leaves_worktree_intact(recruited: Path, fleet):
-    (recruited / "scratch.txt").write_text("notes\n", encoding="utf-8")
-
-    fleet("done", cwd=recruited)
-
     assert recruited.exists()
     assert (recruited / "scratch.txt").read_text(encoding="utf-8") == "notes\n"
 

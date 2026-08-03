@@ -15,8 +15,9 @@ import io
 import json
 from pathlib import Path
 
+import pytest
+
 from fleet import mailbox, notify
-from fleet.store import FleetStore
 
 
 def stop_payload(cwd: Path, reentrant: bool = False) -> dict:
@@ -38,98 +39,65 @@ def injected_text(response: dict) -> str:
 # delivery
 # --------------------------------------------------------------------------
 
-def test_delivers_unread_mail_to_the_stopping_worker(repo: Path, fleet, store, worktree_of, live_callsigns):
+@pytest.fixture
+def worker(repo: Path, fleet, live_callsigns):
+    """A recruited worker's callsign. Every delivery test needs one."""
     fleet("init", cwd=repo)
     fleet("recruit", cwd=repo)
-    callsign = live_callsigns()[0]
-    mailbox.post(store, callsign, "prioritize the auth path")
-
-    response = notify.deliver(stop_payload(worktree_of(callsign)))
-
-    assert response["hookSpecificOutput"]["hookEventName"] == "Stop"
-    assert "prioritize the auth path" in injected_text(response)
+    return live_callsigns()[0]
 
 
-def test_delivered_mail_is_marked_read(repo: Path, fleet, store, worktree_of, live_callsigns):
-    """Delivery drains the spool, or the same message rides along on every turn."""
-    fleet("init", cwd=repo)
-    fleet("recruit", cwd=repo)
-    callsign = live_callsigns()[0]
-    mailbox.post(store, callsign, "one time only")
-
-    notify.deliver(stop_payload(worktree_of(callsign)))
-
-    assert mailbox.unread_count(store, callsign) == 0
-    assert notify.deliver(stop_payload(worktree_of(callsign))) == {}
-
-
-def test_delivers_every_pending_message(repo: Path, fleet, store, worktree_of, live_callsigns):
-    fleet("init", cwd=repo)
-    fleet("recruit", cwd=repo)
-    callsign = live_callsigns()[0]
+def test_delivers_all_unread_mail_and_drains_the_spool(store, worker, worktree_of):
+    """One batch per idle: everything pending goes, and nothing rides along again."""
     for note in ("first", "second", "third"):
-        mailbox.post(store, callsign, note)
+        mailbox.post(store, worker, note)
 
-    text = injected_text(notify.deliver(stop_payload(worktree_of(callsign))))
+    response = notify.deliver(stop_payload(worktree_of(worker)))
 
+    text = injected_text(response)
+    assert response["hookSpecificOutput"]["hookEventName"] == "Stop"
     assert "first" in text and "second" in text and "third" in text
+    assert mailbox.unread_count(store, worker) == 0
+    assert notify.deliver(stop_payload(worktree_of(worker))) == {}
 
 
-def test_injected_text_attributes_the_sender(repo: Path, fleet, store, worktree_of, live_callsigns):
+def test_injected_text_attributes_the_sender(store, worker, worktree_of):
     """Hook output is untrusted input from the agent's point of view; unattributed text
     invites a worker to ignore a real directive."""
-    fleet("init", cwd=repo)
-    fleet("recruit", cwd=repo)
-    callsign = live_callsigns()[0]
-    mailbox.post(store, callsign, "ship it")
+    mailbox.post(store, worker, "ship it")
 
-    text = injected_text(notify.deliver(stop_payload(worktree_of(callsign))))
+    text = injected_text(notify.deliver(stop_payload(worktree_of(worker))))
 
     assert "quartermaster" in text
     assert "Fleet mail" in text
+
+
+def test_silent_on_a_reentrant_stop(store, worker, worktree_of):
+    """A stop provoked by our own injected context must not drain again — otherwise
+    each delivery provokes the next."""
+    mailbox.post(store, worker, "should wait for a genuine idle")
+
+    assert notify.deliver(stop_payload(worktree_of(worker), reentrant=True)) == {}
+    assert mailbox.unread_count(store, worker) == 1
 
 
 # --------------------------------------------------------------------------
 # silence everywhere else
 # --------------------------------------------------------------------------
 
-def test_silent_with_no_mail(repo: Path, fleet, worktree_of, live_callsigns):
-    fleet("init", cwd=repo)
-    fleet("recruit", cwd=repo)
-
-    assert notify.deliver(stop_payload(worktree_of(live_callsigns()[0]))) == {}
+def test_silent_with_no_mail(worker, worktree_of):
+    assert notify.deliver(stop_payload(worktree_of(worker))) == {}
 
 
-def test_silent_outside_a_worktree(repo: Path, fleet):
-    """The repo root is a git repo with fleet state, but it is nobody's worktree."""
+def test_silent_anywhere_that_is_not_a_worker(repo: Path, fleet, tmp_path: Path):
+    """The hook fires in every session the user runs. A traceback or stray output here
+    would break unrelated projects on every turn."""
     fleet("init", cwd=repo)
 
+    # A git repo with fleet state, but nobody's worktree; an unrelated directory; and
+    # payloads with nothing usable in them.
     assert notify.deliver(stop_payload(repo)) == {}
-
-
-def test_silent_outside_a_git_repo(tmp_path: Path):
-    """The common case: an ordinary session in some unrelated directory."""
     assert notify.deliver(stop_payload(tmp_path)) == {}
-
-
-def test_silent_on_a_missing_cwd():
-    assert notify.deliver({"hook_event_name": "Stop"}) == {}
-
-
-def test_silent_on_a_reentrant_stop(repo: Path, fleet, store, worktree_of, live_callsigns):
-    """A stop provoked by our own injected context must not drain again — otherwise
-    each delivery provokes the next."""
-    fleet("init", cwd=repo)
-    fleet("recruit", cwd=repo)
-    callsign = live_callsigns()[0]
-    mailbox.post(store, callsign, "should wait for a genuine idle")
-
-    assert notify.deliver(stop_payload(worktree_of(callsign), reentrant=True)) == {}
-    assert mailbox.unread_count(store, callsign) == 1
-
-
-def test_never_raises_on_a_malformed_payload():
-    """A traceback would surface as a hook error on every turn of an unrelated project."""
     for payload in ({}, {"cwd": None}, {"cwd": ""}, {"cwd": "/nonexistent/nowhere"}):
         assert notify.deliver(payload) == {}
 
@@ -138,28 +106,18 @@ def test_never_raises_on_a_malformed_payload():
 # the hook entry point
 # --------------------------------------------------------------------------
 
-def test_run_hook_reads_stdin_and_writes_json(repo: Path, fleet, store, worktree_of, live_callsigns):
-    fleet("init", cwd=repo)
-    fleet("recruit", cwd=repo)
-    callsign = live_callsigns()[0]
-    mailbox.post(store, callsign, "via the entry point")
+def test_run_hook_reads_stdin_and_writes_json(store, worker, worktree_of):
+    mailbox.post(store, worker, "via the entry point")
 
     out = io.StringIO()
-    notify.run_hook(io.StringIO(json.dumps(stop_payload(worktree_of(callsign)))), out)
+    notify.run_hook(io.StringIO(json.dumps(stop_payload(worktree_of(worker)))), out)
 
     assert "via the entry point" in injected_text(json.loads(out.getvalue()))
 
 
-def test_run_hook_writes_nothing_when_there_is_no_mail(tmp_path: Path):
+def test_run_hook_writes_nothing_when_there_is_nothing_to_say(tmp_path: Path):
     """Empty output, not '{}': the harness reads stdout on every turn everywhere."""
-    out = io.StringIO()
-    notify.run_hook(io.StringIO(json.dumps(stop_payload(tmp_path))), out)
-
-    assert out.getvalue() == ""
-
-
-def test_run_hook_survives_garbage_on_stdin():
-    out = io.StringIO()
-    notify.run_hook(io.StringIO("not json at all"), out)
-
-    assert out.getvalue() == ""
+    for stdin in (json.dumps(stop_payload(tmp_path)), "not json at all"):
+        out = io.StringIO()
+        notify.run_hook(io.StringIO(stdin), out)
+        assert out.getvalue() == ""
