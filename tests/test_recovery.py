@@ -177,8 +177,11 @@ def test_dismiss_survives_a_missing_worktree(stranded: Path, fleet, initialized:
     assert store.live_callsigns() == []
 
 
-def test_done_and_dismiss_produce_the_same_archive(initialized: Path, fleet, worktree_of, store):
+def test_done_and_dismiss_produce_the_same_archive(initialized: Path, fleet, stand_down, worktree_of, store):
     """Both routes share one teardown, so the resulting record must match.
+
+    ``done`` reaches it in two phases and ``dismiss`` in one, which is exactly why
+    this is worth pinning: the archived record must not betray which route ran.
 
     The two recruits draw different callsigns, so each is captured as it happens
     rather than assumed.
@@ -187,7 +190,7 @@ def test_done_and_dismiss_produce_the_same_archive(initialized: Path, fleet, wor
     (torn_down,) = store.live_callsigns()
     worktree = worktree_of(torn_down)
     git("commit", "-q", "--allow-empty", "-m", "work", cwd=worktree)
-    fleet("done", cwd=worktree)
+    stand_down(worktree)
     via_done = _archived_record(store, torn_down)
 
     fleet("recruit", cwd=initialized)

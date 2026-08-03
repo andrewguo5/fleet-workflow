@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 STAGES = ("observation", "strategizing", "execution")
-STATUSES = ("recruited", "running", "waiting", "requesting-input", "done")
+STATUSES = ("recruited", "running", "waiting", "requesting-input", "standing-down", "done")
 
 # Frontmatter emitted in this fixed order; None values are omitted.
 FRONT_FIELDS = (

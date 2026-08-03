@@ -44,7 +44,10 @@ state directory. Callsign allocation is lock-guarded; every write is atomic.
    works the observation→strategizing→execution loop, syncing at checkpoints.
 3. Supervise via `fleet watch` and/or `fleet qm`.
 4. The worker does its own commits + squash-merge + `/get-some-sleep`, then `fleet done`
-   to tear down and archive.
+   to stand down. Teardown finishes in two steps: `done` marks the worker
+   `standing-down` and leaves the worktree alone (it cannot delete the cwd of the
+   session calling it), and the next `fleet` command run from anywhere else releases
+   the worktree, archives the record, and frees the callsign.
 
 ## Command quick reference
 
@@ -58,5 +61,5 @@ fleet inspect <callsign>         one worker's full file + mail
 fleet msg <callsign|all> "…"     QM → worker directive
 fleet sync [flags]               worker updates own state
 fleet inbox [--all]              worker drains mailbox
-fleet done                       worker teardown + archive
+fleet done                       worker stands down (worktree released after it exits)
 ```

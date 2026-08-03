@@ -87,7 +87,7 @@ fleet qm --agent "<your-agent-command>"  # talk to the Quartermaster
 # the worker keeps its own state fresh
 fleet sync --stage execution --status running --next "backfill 400 SKUs"
 fleet inbox                 # read directives from the QM
-fleet done                  # tear down + archive when finished
+fleet done                  # stand down when finished; the worktree is released after you exit
 ```
 
 ## Worktree backends
@@ -120,11 +120,23 @@ fleet done                  # tear down + archive when finished
 | `fleet inbox [--all]` | worker | drain mailbox by hand |
 | `fleet notify --check` | you | verify mail delivery is installed and reachable |
 | `fleet notify --hook` | agent | Stop-hook entry point; delivers mail (never typed) |
-| `fleet done [--force]` | worker | teardown + archive |
+| `fleet done [--force]` | worker | stand down; worktree released after you exit |
 
 `fleet done` refuses to tear down a worktree with uncommitted changes — including
 untracked files — and lists what is at stake, so you never have to check before
 standing a worker down. Pass `--force` to discard the work deliberately.
+
+Teardown happens in two steps, and `fleet done` is only the first. It marks the worker
+`standing-down` and leaves the worktree on disk, because the session that ran it is
+*standing in that directory* — deleting it out from under a live process leaves it with
+a cwd that no longer exists, and on macOS such a process can no longer spawn children at
+all, which silently kills mail delivery and every other subprocess for the rest of its
+life. Once the worker has been `standing-down` for a couple of minutes, the next `fleet`
+command anyone runs releases the worktree, archives the record, and frees the callsign —
+and because that command runs somewhere else, it can never strand its own caller. The
+worker stays visible in `fleet status` in between, so a teardown that stalls is obvious
+rather than silent. `fleet dismiss` skips the wait: it exists for worktrees nobody is
+inside.
 
 Mail is pushed, not polled. `fleet init` offers to install a Claude Code `Stop` hook
 that delivers a worker's unread directives into its context the moment it finishes a

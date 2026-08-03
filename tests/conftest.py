@@ -11,6 +11,7 @@ from __future__ import annotations
 import random
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from typer.testing import CliRunner
 from fleet import callsign as callsign_mod
 from fleet.cli import app
 from fleet.store import FleetStore
+from fleet.worker import Worker
 
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "Fleet Test",
@@ -63,6 +65,9 @@ def isolated_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     state_home = tmp_path / "state"
     monkeypatch.setenv("FLEET_STATE_HOME", str(state_home))
     monkeypatch.delenv("FLEET_AGENT", raising=False)
+    # Set in every worker's shell, so the suite fails when run from inside a fleet
+    # worktree unless it is scrubbed — which is exactly where fleet gets developed.
+    monkeypatch.delenv("FLEET_CALLSIGN", raising=False)
     # init resolves its install dir from CLAUDE_CONFIG_DIR; redirect it so the suite
     # never writes prompts into the developer's real ~/.claude or ~/.claude-work.
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
@@ -93,6 +98,42 @@ def occupy_callsigns(store, names) -> None:
         store.worker_path(name).write_text(
             f"---\nworker: {name}\nstatus: running\n---\n", encoding="utf-8"
         )
+
+
+def age_past_grace(store, callsign: str) -> None:
+    """Backdate a worker's heartbeat so the next fleet command reaps it.
+
+    ``fleet done`` only marks a worker ``standing-down``; the worktree is released by
+    whatever command runs next, once the worker has been in that state longer than
+    ``REAP_GRACE_MINUTES``. Tests that care about the finished state rewind the clock
+    rather than sleep through it.
+    """
+    from fleet.cli import REAP_GRACE_MINUTES
+
+    path = store.worker_path(callsign)
+    w = Worker.parse(path.read_text(encoding="utf-8"))
+    stale = datetime.now() - timedelta(minutes=REAP_GRACE_MINUTES + 1)
+    w.updated = stale.strftime("%Y-%m-%dT%H:%M")
+    path.write_text(w.render(), encoding="utf-8")
+
+
+@pytest.fixture
+def stand_down(fleet, store):
+    """Run a worker's full two-phase teardown, from outside its worktree.
+
+    The common case for tests that only care about the end state: `fleet done` in the
+    worktree, then age the clock and trigger the reap from the repo root — which is
+    also what really happens, since the reaping command runs in a different directory.
+    """
+
+    def run(worktree: Path, *args: str):
+        result = fleet("done", *args, cwd=worktree)
+        if result.ok:
+            age_past_grace(store, worktree.name)
+            fleet("status", cwd=store.repo_root)
+        return result
+
+    return run
 
 
 @pytest.fixture

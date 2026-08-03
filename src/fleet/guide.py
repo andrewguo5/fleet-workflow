@@ -125,7 +125,7 @@ SECTIONS: tuple[Section, ...] = (
         steps=(
             Step(
                 command="fleet done",
-                note="Tears down the worktree and archives the record. Refuses while anything is uncommitted, so you never have to check first.",
+                note="Marks you standing-down. Refuses while anything is uncommitted, so you never have to check first. Your worktree is released once you exit it — the next fleet command anyone runs finishes the job.",
                 where="../wt/alpha",
             ),
             Step(

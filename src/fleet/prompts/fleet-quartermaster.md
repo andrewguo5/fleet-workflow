@@ -72,6 +72,13 @@ worktree has uncommitted changes.
 **Confirm with the human before dismissing.** A quiet worker may simply be one whose
 agent is thinking, or one they parked deliberately. Recommend; let them decide.
 
+**`standing-down` is not stranded.** A worker that ran `fleet done` sits in that state
+until its session exits, because `done` cannot delete the directory it is being run
+from. The next `fleet` command — including the ones you run — releases the worktree and
+archives it. Seeing it briefly is the system working. Only flag one that is still
+`standing-down` long after the human says that session closed; that means no fleet
+command has run since, and any of yours will clear it.
+
 ## Optional working notes
 
 You may keep light notes (running themes, what you've already surfaced, what you're

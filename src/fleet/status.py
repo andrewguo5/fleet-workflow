@@ -24,6 +24,7 @@ _STATUS_STYLE = {
     "waiting": "yellow",
     "requesting-input": "bold red",
     "recruited": "cyan",
+    "standing-down": "magenta",
     "done": "dim",
 }
 
@@ -35,7 +36,7 @@ def load_workers(store: FleetStore) -> list[Worker]:
     return workers
 
 
-def _age_minutes(stamp: str | None) -> int | None:
+def age_minutes(stamp: str | None) -> int | None:
     if not stamp:
         return None
     try:
@@ -46,7 +47,7 @@ def _age_minutes(stamp: str | None) -> int | None:
 
 
 def is_stale(worker: Worker) -> bool:
-    age = _age_minutes(worker.claimed)
+    age = age_minutes(worker.claimed)
     return age is not None and age > STALE_AFTER_HOURS * 60
 
 
@@ -79,7 +80,7 @@ def build_listing(store: FleetStore) -> Group:
         line = Text()
         line.append(f"{w.worker:<{callsign_width}}  ", style="bold")
         line.append(f"{status:<{status_width}}  ", style=_STATUS_STYLE.get(status, ""))
-        line.append(f"{_fmt_age(_age_minutes(w.updated)):>4}  ", style="dim")
+        line.append(f"{_fmt_age(age_minutes(w.updated)):>4}  ", style="dim")
         line.append(w.thread or "—")
         unread = mailbox.unread_count(store, w.worker)
         if unread:
@@ -132,7 +133,7 @@ def build_table(store: FleetStore) -> Table:
         status_text = Text(status, style=_STATUS_STYLE.get(status, ""))
         unread = mailbox.unread_count(store, w.worker)
         mail_cell = Text(str(unread), style="bold magenta") if unread else Text("·", style="dim")
-        updated = _fmt_age(_age_minutes(w.updated))
+        updated = _fmt_age(age_minutes(w.updated))
         if is_stale(w):
             updated = f"[red]{updated} stale[/red]"
         table.add_row(

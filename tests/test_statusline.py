@@ -76,9 +76,9 @@ def test_badge_leaves_the_worktree_clean(worker: Path):
     assert git("status", "--short", cwd=worker) == ""
 
 
-def test_worker_can_be_torn_down(worker: Path, fleet):
+def test_worker_can_be_torn_down(worker: Path, stand_down):
     """The failure this guards against: every worker stranded behind --force."""
-    result = fleet("done", cwd=worker)
+    result = stand_down(worker)
 
     assert result.ok, result.output
     assert not worker.exists()

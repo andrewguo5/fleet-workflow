@@ -248,13 +248,13 @@ def test_sync_surfaces_unread_count(two_workers, fleet, store):
     assert "2 unread" in result.output
 
 
-def test_mail_is_archived_with_the_worker(two_workers, fleet, store):
+def test_mail_is_archived_with_the_worker(two_workers, fleet, stand_down, store):
     crew = two_workers
     alpha = crew.first_worktree
     fleet("msg", crew.first, "prioritize token refresh", cwd=store.repo_root)
     git("commit", "-q", "--allow-empty", "-m", "work", cwd=alpha)
 
-    fleet("done", cwd=alpha)
+    stand_down(alpha)
 
     archived = next(store.archive_dir.glob(f"*-{crew.first}.md")).read_text(encoding="utf-8")
     assert "prioritize token refresh" in archived

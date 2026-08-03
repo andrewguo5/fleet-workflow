@@ -70,6 +70,14 @@ def config_dir() -> Path:
 # How many dirty paths `fleet done` lists before collapsing the rest into a count.
 DIRTY_PREVIEW_LIMIT = 10
 
+# How long a worker sits `standing-down` before any other fleet command releases its
+# worktree. It is a proxy for "the session that ran `fleet done` has exited": cheap and
+# self-correcting in both directions, where probing the directory for a live process
+# would be platform-specific and slow on every `fleet status`. Being early costs one
+# stranded session (recoverable with `cd ~`); being late costs a worktree lingering
+# until the next command. Whole minutes, because `updated` is minute-resolution.
+REAP_GRACE_MINUTES = 2
+
 
 def _show_guide(value: bool) -> None:
     """Eager ``--guide`` callback: print the walkthrough and exit before any command.
@@ -102,10 +110,14 @@ def main(
 
 def _store() -> FleetStore:
     try:
-        return FleetStore()
+        store = FleetStore()
     except NotAGitRepoError:
         console.print("[red]fleet must be run inside a git repository.[/red]")
         raise typer.Exit(1)
+    # Every state-touching command funnels through here, so each one sweeps up the
+    # teardowns left half-finished before it. See `_reap_expired`.
+    _reap_expired(store)
+    return store
 
 
 def _fail(message: str) -> None:
@@ -641,33 +653,77 @@ def inbox(
         console.print(f"  {m.stamp} {m.attribution} {m.text}", markup=False)
 
 
-def _stand_down(store: FleetStore, callsign: str, force: bool, invoked_as: str) -> None:
-    """Tear down one worker: release the worktree, archive the record, free the callsign.
+def _refuse_if_dirty(w: Worker, force: bool, invoked_as: str) -> None:
+    """Block teardown while the worktree holds uncommitted work.
 
-    Shared by ``done`` (the worker retiring itself) and ``dismiss`` (recovering one
-    from outside), so the two can never drift on what teardown means. ``invoked_as``
-    only shapes the retry advice, which differs because ``dismiss`` takes a callsign
-    and ``done`` infers it.
+    Runs before anything is mutated: a refusal must leave the worker fully intact.
+    """
+    if force:
+        return
+    entries = worktree_mod.dirty_entries(Path(w.worktree)) if w.worktree else []
+    if not entries:
+        return
+    console.print(f"[red]{w.worker} has uncommitted changes — not tearing down.[/red]")
+    for line in entries[:DIRTY_PREVIEW_LIMIT]:
+        # markup=False: porcelain paths may contain [brackets] that would
+        # otherwise be parsed as style tags.
+        console.print(f"  {line}", markup=False, style="yellow")
+    if len(entries) > DIRTY_PREVIEW_LIMIT:
+        console.print(f"  [dim]… and {len(entries) - DIRTY_PREVIEW_LIMIT} more[/dim]")
+    console.print(f"\ncommit or stash the work, then re-run [bold]{invoked_as}[/bold].")
+    console.print(f"to discard it instead: [bold]{invoked_as} --force[/bold]")
+    raise typer.Exit(1)
+
+
+def _begin_stand_down(store: FleetStore, callsign: str, force: bool, invoked_as: str) -> None:
+    """Phase 1 of teardown: everything except deleting the worktree.
+
+    ``fleet done`` runs as a subprocess of the session sitting *inside* the worktree,
+    and a child cannot move its parent's cwd. Deleting the directory here would strand
+    that session with a cwd that no longer exists — on macOS such a process can no
+    longer spawn children at all, which silently kills the mail hook and every other
+    subprocess for the rest of its life. So phase 1 stops short: the worker is marked
+    ``standing-down`` and the worktree stays on disk. ``_reap`` finishes the job later,
+    from a different session.
     """
     w = _load_worker(store, callsign)
+    _refuse_if_dirty(w, force, invoked_as)
 
-    # Check before mutating anything: a refusal must leave the worker fully intact.
-    if not force:
-        entries = worktree_mod.dirty_entries(Path(w.worktree)) if w.worktree else []
-        if entries:
-            console.print(f"[red]{callsign} has uncommitted changes — not tearing down.[/red]")
-            for line in entries[:DIRTY_PREVIEW_LIMIT]:
-                # markup=False: porcelain paths may contain [brackets] that would
-                # otherwise be parsed as style tags.
-                console.print(f"  {line}", markup=False, style="yellow")
-            if len(entries) > DIRTY_PREVIEW_LIMIT:
-                console.print(f"  [dim]… and {len(entries) - DIRTY_PREVIEW_LIMIT} more[/dim]")
-            console.print(f"\ncommit or stash the work, then re-run [bold]{invoked_as}[/bold].")
-            console.print(f"to discard it instead: [bold]{invoked_as} --force[/bold]")
-            raise typer.Exit(1)
+    w.status = "standing-down"
+    w.updated = now_stamp()
+    if force:
+        # Remembered because the reap runs later, from a process that never saw the
+        # flag; without it a worktree dirtied between the two phases would block.
+        w.set_section("Teardown", "forced: uncommitted work is to be discarded on reap.")
+    store.atomic_write(store.worker_path(callsign), w.render())
+
+    console.print(
+        f"[green]{callsign} standing down.[/green] "
+        f"the worktree is released once you leave it "
+        f"(automatically, within ~{REAP_GRACE_MINUTES} minutes)."
+    )
+
+
+def _reap(store: FleetStore, callsign: str, force: bool = False) -> Path | None:
+    """Phase 2 of teardown: release the worktree, archive the record, free the callsign.
+
+    Correct precisely because it never runs inside the directory it deletes — a
+    *different* fleet invocation always triggers it, so stranding is structurally
+    impossible rather than merely avoided. Shared by the automatic sweep and by
+    ``dismiss``, so the two can never drift on what teardown means.
+
+    Returns the archive path, or None if the worker file has already been reaped by a
+    concurrent invocation.
+    """
+    path = store.worker_path(callsign)
+    if not path.exists():
+        return None
+    w = Worker.parse(path.read_text(encoding="utf-8"))
+    forced = force or (w.get_section("Teardown") or "").startswith("forced")
 
     w.status = "done"
     w.updated = now_stamp()
+    w.remove_section("Teardown")
 
     # Fold the mail trail into the archived record.
     messages = mailbox.all_messages(store, callsign)
@@ -677,7 +733,7 @@ def _stand_down(store: FleetStore, callsign: str, force: bool, invoked_as: str) 
     with store.lock():
         try:
             get_provider(w.provider or "plain", store.repo_root).release(
-                callsign, w.worktree or "", force=force
+                callsign, w.worktree or "", force=forced
             )
         except WorktreeError as e:
             console.print(f"[yellow]worktree teardown warning: {e}[/yellow]")
@@ -685,21 +741,67 @@ def _stand_down(store: FleetStore, callsign: str, force: bool, invoked_as: str) 
         store.atomic_write(archive_path, w.render())
         store.worker_path(callsign).unlink(missing_ok=True)
         store.mail_path(callsign).unlink(missing_ok=True)
+    return archive_path
 
-    console.print(f"[green]{callsign} stood down.[/green] archived -> {archive_path}")
+
+def _cwd_or_none() -> Path | None:
+    """The resolved cwd, or None when it no longer exists.
+
+    A deleted cwd is not hypothetical here — it is the state this whole feature exists
+    to prevent, and a session already in it still runs fleet commands. ``Path.cwd()``
+    raises there, and letting that escape would break every command for exactly the
+    people worst affected.
+    """
+    try:
+        return Path.cwd().resolve()
+    except OSError:
+        return None
+
+
+def _contains(directory: Path, candidate: Path) -> bool:
+    """Whether ``candidate`` is ``directory`` or sits beneath it."""
+    resolved = directory.resolve() if directory.exists() else directory
+    return resolved == candidate or resolved in candidate.parents
+
+
+def _reap_expired(store: FleetStore) -> None:
+    """Finish teardown for every worker that has been ``standing-down`` past the grace
+    period. Called by ``_store()``, so any fleet command sweeps the ones before it.
+
+    Deliberately silent and total: this is a side effect of an unrelated command, so it
+    must neither narrate nor be able to fail one. A worker whose reap raises is left
+    ``standing-down`` for the next command to retry.
+    """
+    here = _cwd_or_none()
+    for w in status.load_workers(store):
+        if w.status != "standing-down":
+            continue
+        age = status.age_minutes(w.updated)
+        if age is None or age < REAP_GRACE_MINUTES:
+            continue
+        if here is not None and w.worktree and _contains(Path(w.worktree), here):
+            # Never delete the directory the deleting process is standing in — that is
+            # the entire bug. Subdirectories count: the cwd goes with the worktree.
+            continue
+        try:
+            _reap(store, w.worker)
+        except Exception:
+            pass
 
 
 @app.command()
 def done(
     force: bool = typer.Option(False, "--force", help="Tear down even if the worktree has uncommitted changes (they are discarded)."),
 ) -> None:
-    """Mark done, tear down the worktree, and archive the worker file. Runs NO content
-    git ops — commit, squash-merge, and handoff are the worker's own responsibility and
-    must happen before this.
+    """Mark done and begin teardown. Runs NO content git ops — commit, squash-merge,
+    and handoff are the worker's own responsibility and must happen before this.
 
-    Refuses to run while the worktree is dirty, so you never have to check first."""
+    Teardown completes in two steps. This one archives nothing and deletes nothing: it
+    marks the worker ``standing-down`` and leaves the worktree in place, because you
+    are standing in it. Once you exit, the next fleet command run by anyone releases
+    it. Refuses to run while the worktree is dirty, so you never have to check first."""
     store = _store()
-    _stand_down(store, _resolve_self(store), force, invoked_as="fleet done")
+    _begin_stand_down(store, _resolve_self(store), force, invoked_as="fleet done")
 
 
 @app.command()
@@ -712,12 +814,19 @@ def dismiss(
     Recovery for a worker nobody is inside: an agent that failed to launch, crashed on
     startup, or was abandoned. ``fleet done`` must run from within the worktree, which
     is exactly what you cannot do when no session is there. Same rules as ``done`` —
-    the branch survives and uncommitted work blocks teardown."""
+    the branch survives and uncommitted work blocks teardown.
+
+    Tears down in one step rather than two. The delay ``done`` accepts exists to spare
+    the session inside the worktree; dismiss is *for* worktrees nobody is inside, so
+    waiting would only slow recovery."""
     store = _store()
     if not store.worker_path(callsign).exists():
         live = ", ".join(store.live_callsigns()) or "none"
         _fail(f"no worker '{callsign}'. live workers: {live}")
-    _stand_down(store, callsign, force, invoked_as=f"fleet dismiss {callsign}")
+    w = _load_worker(store, callsign)
+    _refuse_if_dirty(w, force, invoked_as=f"fleet dismiss {callsign}")
+    archive_path = _reap(store, callsign, force=force)
+    console.print(f"[green]{callsign} stood down.[/green] archived -> {archive_path}")
 
 
 if __name__ == "__main__":

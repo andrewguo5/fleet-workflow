@@ -69,5 +69,13 @@ After your own merge and your own `/get-some-sleep` handoff, stand down:
 fleet done
 ```
 
-This tears down your worktree and archives your worker file. Do it only after the
-content work and handoff are complete.
+This marks you `standing-down`. Do it only after the content work and handoff are
+complete.
+
+**Your worktree will still be there afterwards — that is correct, not a failure.**
+Deleting it while you are standing in it would leave your session with a cwd that no
+longer exists, after which you could not run *any* command for the rest of your life.
+So `fleet done` stops short: once you exit, the next `fleet` command anyone runs
+releases the worktree, archives your file, and frees your callsign. Report that you
+stood down and finish your turn; there is nothing further for you to do, and nothing
+to retry.
