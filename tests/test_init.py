@@ -23,6 +23,17 @@ def unscoped(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
 
+@pytest.fixture
+def hook_reachable(monkeypatch: pytest.MonkeyPatch):
+    """A `fleet` on PATH that can deliver mail — the healthy case.
+
+    Both halves are stubbed because the real checks shell out, and a test must not
+    depend on how fleet happens to be installed on the machine running it.
+    """
+    monkeypatch.setattr("fleet.hookinstall.resolves", lambda: "/usr/local/bin/fleet")
+    monkeypatch.setattr("fleet.hookinstall.supports_delivery", lambda path: True)
+
+
 # --------------------------------------------------------------------------
 # resolution
 # --------------------------------------------------------------------------
@@ -208,3 +219,108 @@ def test_reports_an_already_installed_hook(repo: Path, fleet, tmp_path: Path, mo
     output = fleet("init", cwd=repo).output
 
     assert "already installed" in output
+
+
+def test_warns_when_the_hook_command_will_not_resolve(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    """Installing a hook that cannot run is silent forever; install time is the only
+    moment the user can be told."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr("fleet.hookinstall.resolves", lambda: None)
+
+    output = fleet("init", "--install-mail-hook", cwd=repo).output
+
+    assert "not on PATH" in output
+    assert "fleet notify --check" in output
+
+
+def test_no_warning_when_the_hook_resolves(repo: Path, fleet, tmp_path: Path, monkeypatch, hook_reachable):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+
+    output = fleet("init", "--install-mail-hook", cwd=repo).output
+
+    assert "not on PATH" not in output
+
+
+def test_an_unresolvable_hook_is_still_installed(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    """A warning, not a refusal: PATH may simply differ between this process and the
+    agent's, and the hook starts working as soon as fleet is reachable."""
+    config = tmp_path / "config"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    monkeypatch.setattr("fleet.hookinstall.resolves", lambda: None)
+
+    result = fleet("init", "--install-mail-hook", cwd=repo)
+
+    assert result.ok, result.output
+    assert hookinstall.is_installed_in(config)
+
+
+# --------------------------------------------------------------------------
+# fleet notify --check
+# --------------------------------------------------------------------------
+
+def test_check_passes_when_installed_and_resolvable(repo: Path, fleet, tmp_path: Path, monkeypatch, hook_reachable):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+    fleet("init", "--install-mail-hook", cwd=repo)
+
+    result = fleet("notify", "--check", cwd=repo)
+
+    assert result.ok, result.output
+    assert "mail delivery is working" in result.output
+
+
+def test_check_fails_when_the_hook_is_missing(repo: Path, fleet, tmp_path: Path, monkeypatch, hook_reachable):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+    fleet("init", cwd=repo)
+
+    result = fleet("notify", "--check", cwd=repo)
+
+    assert result.exit_code == 1
+    assert "not installed" in result.output
+
+
+def test_check_fails_when_the_binary_is_unreachable(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    """Installed but unresolvable — the case that is invisible at runtime."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr("fleet.hookinstall.resolves", lambda: None)
+    fleet("init", "--install-mail-hook", cwd=repo)
+
+    result = fleet("notify", "--check", cwd=repo)
+
+    assert result.exit_code == 1
+    assert "not on PATH" in result.output
+
+
+def test_check_reports_both_failures_independently(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    """Either alone breaks delivery, so a user with both needs to see both."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr("fleet.hookinstall.resolves", lambda: None)
+    fleet("init", cwd=repo)
+
+    output = fleet("notify", "--check", cwd=repo).output
+
+    assert "not installed" in output
+    assert "not on PATH" in output
+
+
+def test_check_fails_when_the_path_fleet_is_too_old(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    """The hook runs whichever fleet PATH finds. A resolvable name is not enough — an
+    install predating `notify` fails just as silently as a missing one."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr("fleet.hookinstall.resolves", lambda: "/usr/local/bin/fleet")
+    monkeypatch.setattr("fleet.hookinstall.supports_delivery", lambda path: False)
+    fleet("init", "--install-mail-hook", cwd=repo)
+
+    result = fleet("notify", "--check", cwd=repo)
+
+    assert result.exit_code == 1
+    assert "too old" in result.output
+
+
+def test_warns_at_install_when_the_path_fleet_is_too_old(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr("fleet.hookinstall.resolves", lambda: "/usr/local/bin/fleet")
+    monkeypatch.setattr("fleet.hookinstall.supports_delivery", lambda path: False)
+
+    output = fleet("init", "--install-mail-hook", cwd=repo).output
+
+    assert "too old" in output

@@ -16,16 +16,72 @@ turn of every session the user runs, in every project.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 SETTINGS_FILE = "settings.json"
 
-# `fleet` resolves on PATH for any session that can run the CLI at all. Deliberately not
-# an absolute path: the user may install fleet in a venv, upgrade it, or move it, and a
-# baked-in path would silently rot into a hook that fails on every turn forever.
-HOOK_COMMAND = "fleet notify --hook"
+# The binary the hook invokes, and the full command line written into settings.json.
+# Deliberately a bare name rather than an absolute path: fleet is routinely installed as
+# a uv/pipx tool shim, and a baked-in path breaks the moment the tool is reinstalled,
+# upgraded, or moved. The cost is a dependence on PATH, which `resolves()` checks at
+# install time and `fleet notify --check` re-checks on demand.
+HOOK_BINARY = "fleet"
+HOOK_COMMAND = f"{HOOK_BINARY} notify --hook"
 
 HOOK_EVENT = "Stop"
+
+# Seconds to let an interactive shell start and resolve the binary. Matches launch.py:
+# sourcing a full profile can be slow on a cold cache.
+RESOLVE_TIMEOUT_SECONDS = 15
+
+
+def resolves() -> str | None:
+    """Where ``fleet`` resolves for the hook, or None if it does not.
+
+    A hook whose command cannot be found fails *completely silently* — verified against
+    a live session, where a nonexistent hook binary produced no error, no warning, and a
+    normal exit. There is no runtime signal to catch, so resolvability has to be checked
+    when the hook is installed and whenever the user asks.
+
+    Checked through the interactive shell as well as PATH: hooks inherit the shell's
+    environment, and a profile-managed install directory (``~/.local/bin`` under uv or
+    pipx) may not be on the PATH of whatever process happens to run ``fleet init``.
+    """
+    found = shutil.which(HOOK_BINARY)
+    if found:
+        return found
+    try:
+        result = subprocess.run(
+            ["/bin/sh", "-lc", f"command -v {HOOK_BINARY}"],
+            capture_output=True, text=True, timeout=RESOLVE_TIMEOUT_SECONDS,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    path = result.stdout.strip()
+    return path if result.returncode == 0 and path else None
+
+
+def supports_delivery(binary_path: str) -> bool:
+    """Whether the ``fleet`` the hook will actually run knows how to deliver mail.
+
+    Resolving the *name* is not enough. A machine can easily have two installs — a uv
+    tool shim on PATH and a venv copy being developed against — and the hook always gets
+    whichever PATH finds. If that one predates ``notify``, it exits with a usage error
+    the harness discards, so delivery fails exactly as silently as a missing binary.
+
+    Probed by running the command rather than comparing versions: the question is
+    whether *this* executable accepts ``notify``, which a version string only proxies.
+    """
+    try:
+        result = subprocess.run(
+            [binary_path, "notify", "--help"],
+            capture_output=True, text=True, timeout=RESOLVE_TIMEOUT_SECONDS,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return result.returncode == 0
 
 
 def hook_entry() -> dict:

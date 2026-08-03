@@ -90,6 +90,10 @@ SECTIONS: tuple[Section, ...] = (
                 note="Sends a directive, delivered when alpha next goes idle. Use 'all' to broadcast to every worker.",
             ),
             Step(
+                command="fleet notify --check",
+                note="Confirms mail delivery is wired up and reachable. Run it if a directive never seems to land.",
+            ),
+            Step(
                 command="fleet ls",
                 note="Quick roster: one line per worker, prints and exits. Add --porcelain to pipe it.",
             ),

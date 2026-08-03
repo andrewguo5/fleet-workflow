@@ -105,6 +105,9 @@ Automatic delivery is a `Stop` hook that `fleet init` offers to install into you
 `fleet notify --uninstall`. Decline it and mail still works — workers just see it on
 their next `fleet sync` instead.
 
+If mail ever seems not to arrive, run `fleet notify --check`. The hook finds `fleet` on
+your PATH, and when it can't it fails silently — `--check` is what makes that visible.
+
 ## Finish a worker
 
 The worker commits and merges its own branch — fleet never does git for you. Once its

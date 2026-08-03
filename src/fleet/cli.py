@@ -237,6 +237,32 @@ def _offer_mail_hook(agent_config: Path, assume_yes: bool = False) -> None:
         console.print(f"  mail hook : [yellow]not installed[/yellow] — {e}")
         return
     console.print("  mail hook : [green]installed[/green]")
+    _warn_if_hook_unresolvable()
+
+
+def _warn_if_hook_unresolvable() -> None:
+    """Say so now if the hook's command will not resolve when it runs.
+
+    An unresolvable hook is completely silent at runtime — no error, no warning, a clean
+    exit — so install time is the only chance to tell the user. Not fatal: PATH may
+    simply differ between this process and the agent's, and the hook starts working the
+    moment `fleet` is reachable.
+    """
+    resolved = hookinstall.resolves()
+    if resolved is None:
+        console.print(
+            f"  [yellow]warning[/yellow]: [bold]{hookinstall.HOOK_BINARY}[/bold] is not on PATH here, so the hook\n"
+            "  would do nothing. It fails silently — there is no error to notice later.\n"
+            "  Put fleet on your PATH (a uv/pipx install lands in ~/.local/bin), then\n"
+            "  confirm with [bold]fleet notify --check[/bold]."
+        )
+        return
+    if not hookinstall.supports_delivery(resolved):
+        console.print(
+            f"  [yellow]warning[/yellow]: the [bold]{hookinstall.HOOK_BINARY}[/bold] on your PATH ({resolved})\n"
+            "  is too old to deliver mail, and the hook runs that one, not this copy.\n"
+            "  Upgrade it, then confirm with [bold]fleet notify --check[/bold]."
+        )
 
 
 @app.command()
@@ -518,9 +544,51 @@ def sync(
         console.print(f"[bold magenta]{unread} unread message(s)[/bold magenta] — run [bold]fleet inbox[/bold]")
 
 
+def _check_mail_hook() -> None:
+    """Report whether mail would actually be delivered, and exit non-zero if not.
+
+    Two independent things have to hold, and either one failing is silent at runtime:
+    the hook must be in the agent's settings, and its command must resolve when the
+    agent runs it. Reported separately so the fix is obvious.
+    """
+    target = config_dir()
+    settings_path = target / hookinstall.SETTINGS_FILE
+
+    try:
+        installed = hookinstall.is_installed_in(target)
+    except ValueError as e:
+        _fail(f"cannot read {settings_path}: {e}")
+
+    if installed:
+        console.print(f"[green]installed[/green]  hook present in {settings_path}")
+    else:
+        console.print(f"[yellow]not installed[/yellow]  no mail hook in {settings_path}")
+        console.print("  add it with [bold]fleet init --install-mail-hook[/bold]")
+
+    resolved = hookinstall.resolves()
+    usable = False
+    if resolved is None:
+        console.print(f"[red]unresolved[/red] [bold]{hookinstall.HOOK_BINARY}[/bold] is not on PATH")
+        console.print("  the hook would run and do nothing, with no error to notice.")
+        console.print("  put fleet on your PATH (uv/pipx installs land in ~/.local/bin).")
+    elif not hookinstall.supports_delivery(resolved):
+        console.print(f"[red]too old[/red]    {resolved} does not support [bold]notify[/bold]")
+        console.print("  the hook runs whichever fleet PATH finds — this one cannot deliver.")
+        console.print("  upgrade that install, or put a newer fleet earlier on PATH.")
+    else:
+        usable = True
+        console.print(f"[green]resolves[/green]   [bold]{hookinstall.HOOK_BINARY}[/bold] -> {resolved}")
+
+    if installed and usable:
+        console.print("\n[green]mail delivery is working.[/green]")
+        return
+    raise typer.Exit(1)
+
+
 @app.command()
 def notify(
     hook: bool = typer.Option(False, "--hook", help="Run as a Claude Code Stop hook: JSON on stdin, JSON on stdout."),
+    check: bool = typer.Option(False, "--check", help="Report whether mail delivery is installed and working."),
     uninstall: bool = typer.Option(False, "--uninstall", help="Remove the mail-delivery hook from your settings."),
 ) -> None:
     """Deliver unread mail to a worker that is going idle.
@@ -529,6 +597,9 @@ def notify(
     fires when a worker finishes its turn — the moment mail should surface. Without it,
     mail sits unread until the worker happens to run ``fleet sync``.
     """
+    if check:
+        _check_mail_hook()
+        return
     if uninstall:
         target = config_dir()
         try:

@@ -141,3 +141,52 @@ def test_uninstall_when_not_installed(tmp_path: Path):
 
     assert hookinstall.uninstall(tmp_path) is False
     assert settings_at(tmp_path) == {"theme": "dark"}
+
+
+# --------------------------------------------------------------------------
+# resolvability
+# --------------------------------------------------------------------------
+
+def test_resolves_finds_the_binary_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """An installed hook whose command cannot be found is silent at runtime, so this is
+    the only place the problem can be detected."""
+    fake = tmp_path / hookinstall.HOOK_BINARY
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    assert hookinstall.resolves() == str(fake)
+
+
+def test_resolves_reports_a_missing_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """An empty PATH: nothing to find, and the login-shell fallback inherits it."""
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+
+    assert hookinstall.resolves() is None
+
+
+def test_hook_command_invokes_the_binary_it_checks(tmp_path: Path):
+    """The name `resolves()` looks up must be the one settings.json actually runs, or
+    the check passes while delivery stays broken."""
+    assert hookinstall.HOOK_COMMAND.split()[0] == hookinstall.HOOK_BINARY
+
+
+def fake_fleet(path: Path, notify_exit: int) -> Path:
+    """A stand-in `fleet` whose `notify` succeeds or fails like an old build's would."""
+    path.write_text(f"#!/bin/sh\nexit {notify_exit}\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def test_supports_delivery_accepts_a_build_with_notify(tmp_path: Path):
+    assert hookinstall.supports_delivery(str(fake_fleet(tmp_path / "fleet", 0)))
+
+
+def test_supports_delivery_rejects_a_build_without_notify(tmp_path: Path):
+    """An install predating `notify` exits with a usage error the harness discards, so
+    it fails exactly as silently as a missing binary."""
+    assert not hookinstall.supports_delivery(str(fake_fleet(tmp_path / "fleet", 2)))
+
+
+def test_supports_delivery_rejects_an_unrunnable_path(tmp_path: Path):
+    assert not hookinstall.supports_delivery(str(tmp_path / "does-not-exist"))

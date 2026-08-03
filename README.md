@@ -118,6 +118,7 @@ fleet done                  # tear down + archive when finished
 | `fleet dismiss <callsign> [--force]` | you / QM | stand down a worker from outside its worktree |
 | `fleet sync [flags]` | worker | update own state |
 | `fleet inbox [--all]` | worker | drain mailbox by hand |
+| `fleet notify --check` | you | verify mail delivery is installed and reachable |
 | `fleet notify --hook` | agent | Stop-hook entry point; delivers mail (never typed) |
 | `fleet done [--force]` | worker | teardown + archive |
 
@@ -133,6 +134,11 @@ worker mid-task, and it cannot compel one to act. The hook is opt-in (it is the 
 thing fleet writes to your `settings.json`), inert outside fleet worktrees, and
 removable with `fleet notify --uninstall`. Decline it and mail still works — workers
 just see it on their next sync.
+
+The hook invokes `fleet` by name, so it depends on PATH. A hook whose command cannot be
+found fails *silently* — no error, no warning, a clean exit — so `fleet init` warns if
+the name will not resolve, and `fleet notify --check` reports both halves (installed?
+reachable?) on demand, exiting non-zero if delivery would not work.
 
 `fleet done` runs from inside a worktree, which is no help when the agent never
 started. `fleet dismiss <callsign>` stands a worker down from anywhere in the repo,

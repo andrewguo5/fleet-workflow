@@ -24,6 +24,11 @@ Two properties this relies on, both verified against a live session rather than 
   agent, not of the shell ``fleet recruit`` exec'd.
 - ``stop_hook_active`` is true when the stop was itself triggered by hook output. Mail is
   skipped in that case; see ``_is_reentrant``.
+
+The failure mode to know about: if the hook's command cannot be found, nothing happens
+and *nothing says so* — a nonexistent hook binary produces no error, no warning, and a
+clean exit. Delivery just stops. ``hookinstall.resolves`` checks for this at install
+time, and ``fleet notify --check`` re-checks on demand.
 """
 
 from __future__ import annotations
