@@ -30,16 +30,18 @@ state directory. Callsign allocation is lock-guarded; every write is atomic.
 - **You ↔ worker**: direct chat in the worker's window. Blocking questions are answered
   here, by you, only.
 - **You ↔ QM**: direct chat in the QM's window.
-- **QM → worker**: `fleet msg` → the worker drains it with `fleet inbox` (async,
-  non-blocking directives — never to answer a blocked worker).
+- **QM → worker**: `fleet msg` → pushed into the worker's context when it next goes idle
+  (a `Stop` hook installed by `fleet init`), or drained on demand with `fleet inbox`.
+  Async and non-blocking — delivery informs a worker, it never interrupts one, and is
+  never used to answer a blocked worker.
 - **Worker → QM**: the worker surfaces observations/complaints/status in its file; the
   QM reads them (`fleet status --verbose`).
 
 ## Lifecycle
 
 1. `fleet recruit --agent "<cmd>"` — provision a worktree + launch a worker in it.
-2. Brief the worker; it runs `/fleet-start` to enlist and work the
-   observation→strategizing→execution loop, syncing at checkpoints.
+2. The session opens primed with `/fleet-start`, so it enlists itself; brief it and it
+   works the observation→strategizing→execution loop, syncing at checkpoints.
 3. Supervise via `fleet watch` and/or `fleet qm`.
 4. The worker does its own commits + squash-merge + `/get-some-sleep`, then `fleet done`
    to tear down and archive.

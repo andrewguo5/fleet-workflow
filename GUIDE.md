@@ -52,12 +52,9 @@ stay tellable apart when several share a window in split panes. The callsign is 
 exported as `$FLEET_CALLSIGN`. The status line is scoped to the worktree — your own
 `~/.claude/settings.json` is left alone.
 
-```
-> /fleet-start
-```
-
-Type this **inside the agent session** that just opened. It briefs the agent on how to
-be a worker. Then tell it what you want built, in your own words.
+The session opens already primed with `/fleet-start`, so the agent enlists itself and
+briefs itself on how to be a worker. You don't type anything to make that happen — just
+tell it what you want built, in your own words.
 
 The agent now works on its own, keeping its status current as it goes. Leave it running.
 
@@ -98,8 +95,15 @@ fleet msg alpha "prioritize the token refresh path"
 fleet msg all "pause after your current step"
 ```
 
-Sends a directive to one worker or broadcasts to all. It lands in their mailbox and
-they pick it up on their next sync — this does not interrupt them.
+Sends a directive to one worker or broadcasts to all. It is delivered into the worker's
+context the moment it next finishes a turn and goes idle, so a broadcast reaches everyone
+without you chasing each session. This does not interrupt anyone: a worker mid-task
+finishes what it is doing first, then reads its mail.
+
+Automatic delivery is a `Stop` hook that `fleet init` offers to install into your agent's
+`settings.json`. It is opt-in, inert outside fleet worktrees, and removable with
+`fleet notify --uninstall`. Decline it and mail still works — workers just see it on
+their next `fleet sync` instead.
 
 ## Finish a worker
 

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from fleet import hookinstall
 from fleet.cli import COMMAND_PROMPTS, commands_dir
 
 
@@ -141,3 +142,69 @@ def test_writes_the_protocol_doc_to_state_not_commands(repo: Path, fleet, store,
 
     assert (store.base / "FLEET.md").is_file()
     assert not (config / "commands" / "FLEET.md").exists()
+
+
+# --------------------------------------------------------------------------
+# the mail-delivery hook
+# --------------------------------------------------------------------------
+
+def test_does_not_install_the_hook_without_consent(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    """settings.json belongs to the user. A non-interactive init must never edit it."""
+    config = tmp_path / "config"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+
+    fleet("init", cwd=repo)
+
+    assert not hookinstall.is_installed_in(config)
+
+
+def test_init_still_succeeds_without_a_tty(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    """A confirm prompt that aborts would turn an optional extra into a failed init."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+
+    result = fleet("init", cwd=repo)
+
+    assert result.ok, result.output
+    assert "skipped" in result.output
+
+
+def test_installs_the_hook_when_asked(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    config = tmp_path / "config"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+
+    result = fleet("init", "--install-mail-hook", cwd=repo)
+
+    assert result.ok, result.output
+    assert hookinstall.is_installed_in(config)
+
+
+def test_shows_the_exact_json_before_asking(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    """Consent to an unseen edit is not consent."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+
+    output = fleet("init", cwd=repo).output
+
+    assert hookinstall.HOOK_COMMAND in output
+    assert "Stop" in output
+
+
+def test_hook_goes_to_the_config_dir_not_the_commands_override(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    """--commands-dir may point anywhere; settings.json still belongs to the agent."""
+    config = tmp_path / "config"
+    elsewhere = tmp_path / "elsewhere"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+
+    fleet("init", "--commands-dir", str(elsewhere), "--install-mail-hook", cwd=repo)
+
+    assert hookinstall.is_installed_in(config)
+    assert not (elsewhere / hookinstall.SETTINGS_FILE).exists()
+
+
+def test_reports_an_already_installed_hook(repo: Path, fleet, tmp_path: Path, monkeypatch):
+    config = tmp_path / "config"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    fleet("init", "--install-mail-hook", cwd=repo)
+
+    output = fleet("init", cwd=repo).output
+
+    assert "already installed" in output

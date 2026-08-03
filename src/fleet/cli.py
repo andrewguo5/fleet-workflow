@@ -4,6 +4,7 @@ Command groups by caller:
   human        init, recruit, qm, watch
   quartermaster status, inspect, msg
   worker       sync, inbox, done   (callsign inferred from the current worktree)
+  agent hook   notify              (wired into Claude Code by init; never typed)
 
 The engine owns every state mutation; agents only ever shell out to these commands.
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import time
 from importlib import resources
 from pathlib import Path
@@ -19,7 +21,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from . import guide, mailbox, status, statusline
+from . import guide, hookinstall, mailbox, notify as notify_mod, status, statusline
 from . import launch as launch_mod
 from . import worktree as worktree_mod
 from .callsign import FleetFullError, pick_available
@@ -37,6 +39,11 @@ console = Console()
 DEFAULT_CONFIG_DIR = Path("~/.claude")
 COMMAND_PROMPTS = ("fleet-start.md", "fleet-quartermaster.md")
 
+# Slash commands the launched sessions are primed with, so an agent takes up its role
+# without the human having to remember to type anything.
+WORKER_PROMPT = "/fleet-start"
+QUARTERMASTER_PROMPT = "/fleet-quartermaster"
+
 
 def commands_dir() -> Path:
     """Where the slash-command prompts belong, for the agent that is running.
@@ -47,9 +54,18 @@ def commands_dir() -> Path:
     because the environment differs between the shell that ran ``fleet`` and any agent
     session it later launches.
     """
+    return config_dir() / "commands"
+
+
+def config_dir() -> Path:
+    """The agent's config directory — where ``settings.json`` lives.
+
+    Same ``CLAUDE_CONFIG_DIR`` resolution Claude Code uses, so the mail hook is written
+    to the config the agent will actually read.
+    """
     configured = os.environ.get("CLAUDE_CONFIG_DIR")
     base = Path(configured) if configured else DEFAULT_CONFIG_DIR
-    return base.expanduser() / "commands"
+    return base.expanduser()
 
 # How many dirty paths `fleet done` lists before collapsing the rest into a count.
 DIRTY_PREVIEW_LIMIT = 10
@@ -133,6 +149,9 @@ def init(
         "--commands-dir",
         help="Where to install the slash-command prompts. Defaults to $CLAUDE_CONFIG_DIR/commands, else ~/.claude/commands.",
     ),
+    install_hook: bool = typer.Option(
+        False, "--install-mail-hook", help="Install the mail-delivery Stop hook without prompting."
+    ),
 ) -> None:
     """Install the prompt pack for the agent you're running and scaffold this project's
     fleet state directory. Idempotent.
@@ -158,8 +177,66 @@ def init(
             "  [dim]running a work/personal-scoped agent? re-run init from that session,[/dim]\n"
             "  [dim]or pass --commands-dir, so the prompts land where it reads them.[/dim]"
         )
+    # Always the real config dir, never `target.parent`: --commands-dir may point
+    # somewhere arbitrary, and settings.json belongs where the agent actually reads it.
+    _offer_mail_hook(config_dir(), assume_yes=install_hook)
+
     console.print("  recruit your first worker with: [bold]fleet recruit --agent \"<your-agent-cmd>\"[/bold]")
     console.print("  new to fleet? [bold]fleet --guide[/bold] walks through the whole loop.")
+
+
+def _confirm_interactively(prompt: str) -> bool:
+    """Ask yes/no, treating a non-interactive run as "no".
+
+    ``fleet init`` is routinely run without a TTY — from a script, from CI, from the
+    test suite. A bare ``typer.confirm`` aborts there with a non-zero exit, which would
+    turn an optional convenience into a hard failure of the whole init.
+    """
+    if not sys.stdin.isatty():
+        return False
+    try:
+        return typer.confirm(prompt, default=False)
+    except (typer.Abort, EOFError):
+        return False
+
+
+def _offer_mail_hook(agent_config: Path, assume_yes: bool = False) -> None:
+    """Ask before touching the user's settings.json, then install the mail hook.
+
+    Opt-in on purpose. Unlike the status line — which is scoped to a worktree and
+    disappears with it — this edits a file fleet does not own and affects every session
+    the user runs, so it is shown in full and declined by default. Declining costs only
+    push delivery; `fleet sync` still reports unread mail.
+    """
+    settings_path = agent_config / hookinstall.SETTINGS_FILE
+    try:
+        if hookinstall.is_installed_in(agent_config):
+            console.print(f"  mail hook : [green]already installed[/green] in {settings_path}")
+            return
+    except ValueError as e:
+        console.print(f"  mail hook : [yellow]skipped[/yellow] — {e}")
+        return
+
+    console.print()
+    console.print("  [bold]Deliver mail automatically?[/bold]")
+    console.print("  Workers only notice mail when they run [bold]fleet sync[/bold], so a directive can")
+    console.print("  sit unread. A Stop hook delivers it the moment a worker goes idle.")
+    console.print(f"  This adds to [bold]{settings_path}[/bold]:")
+    for line in hookinstall.preview().splitlines():
+        console.print(f"    [dim]{line}[/dim]")
+    console.print("  [dim]It exits immediately outside a fleet worktree. Remove it any time with[/dim]")
+    console.print("  [dim]`fleet notify --uninstall`.[/dim]")
+
+    if not (assume_yes or _confirm_interactively("  Add it?")):
+        console.print("  mail hook : [yellow]skipped[/yellow] — workers see mail on their next `fleet sync`.")
+        console.print("  [dim]enable it later with `fleet init --install-mail-hook`.[/dim]")
+        return
+    try:
+        hookinstall.install(agent_config)
+    except (ValueError, OSError) as e:
+        console.print(f"  mail hook : [yellow]not installed[/yellow] — {e}")
+        return
+    console.print("  mail hook : [green]installed[/green]")
 
 
 @app.command()
@@ -219,7 +296,7 @@ def recruit(
     provider: str = typer.Option("plain", "--provider", help="Worktree backend: plain | treehouse."),
 ) -> None:
     """Draw a free callsign at random, provision an isolated worktree+branch, write a worker
-    stub, then chdir into the worktree and launch your agent there."""
+    stub, then chdir into the worktree and launch your agent there, primed to enlist."""
     store = _store()
     store.ensure_dirs()
 
@@ -260,10 +337,17 @@ def recruit(
     console.print(f"  branch   : fleet/{callsign}")
     console.print(f"  worktree : {wt}")
 
-    hint = launch_mod.launch(Path(wt), resolved_agent, callsign=callsign)
+    # Prime the session with /fleet-start so the worker enlists on its own. Left to the
+    # human, this step is silently skippable: the agent opens looking perfectly normal
+    # and simply never joins the fleet, so it goes missing from watch/status with no
+    # error anywhere. Same mechanism qm uses to prime the Quartermaster.
+    hint = launch_mod.launch(
+        Path(wt), resolved_agent, initial_prompt=WORKER_PROMPT, callsign=callsign
+    )
     if hint:
         console.print("  no --agent given; open your agent yourself:")
         console.print(f"    [bold]{hint}[/bold]")
+        console.print(f"  then run [bold]{WORKER_PROMPT}[/bold] in that session.")
 
 
 @app.command()
@@ -278,11 +362,13 @@ def qm(
     # unresolvable command would exit silently with no explanation.
     if resolved_agent and not launch_mod.can_launch(resolved_agent):
         _fail(f"agent command not found: {resolved_agent!r}")
-    hint = launch_mod.launch(store.repo_root, resolved_agent, initial_prompt="/fleet-quartermaster")
+    hint = launch_mod.launch(
+        store.repo_root, resolved_agent, initial_prompt=QUARTERMASTER_PROMPT
+    )
     if hint:
         console.print("  no --agent given; start the quartermaster yourself:")
         console.print(f"    [bold]{hint}[/bold]")
-        console.print("  then run [bold]/fleet-quartermaster[/bold] in that session.")
+        console.print(f"  then run [bold]{QUARTERMASTER_PROMPT}[/bold] in that session.")
 
 
 @app.command()
@@ -430,6 +516,35 @@ def sync(
     console.print(f"[green]{callsign}[/green] synced ({w.stage or '?'}/{w.status or '?'})")
     if unread:
         console.print(f"[bold magenta]{unread} unread message(s)[/bold magenta] — run [bold]fleet inbox[/bold]")
+
+
+@app.command()
+def notify(
+    hook: bool = typer.Option(False, "--hook", help="Run as a Claude Code Stop hook: JSON on stdin, JSON on stdout."),
+    uninstall: bool = typer.Option(False, "--uninstall", help="Remove the mail-delivery hook from your settings."),
+) -> None:
+    """Deliver unread mail to a worker that is going idle.
+
+    Not meant to be typed. ``fleet init`` wires this into the agent's Stop hook, which
+    fires when a worker finishes its turn — the moment mail should surface. Without it,
+    mail sits unread until the worker happens to run ``fleet sync``.
+    """
+    if uninstall:
+        target = config_dir()
+        try:
+            removed = hookinstall.uninstall(target)
+        except (ValueError, OSError) as e:
+            _fail(str(e))
+        if removed:
+            console.print(f"[green]mail hook removed[/green] from {target / hookinstall.SETTINGS_FILE}")
+        else:
+            console.print("[yellow]no mail hook installed[/yellow] there.")
+        return
+    if not hook:
+        console.print("[dim]notify is a hook entry point; run it with --hook, or let "
+                      "[bold]fleet init[/bold] wire it up.[/dim]")
+        return
+    notify_mod.run_hook()
 
 
 @app.command()

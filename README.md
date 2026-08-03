@@ -106,7 +106,7 @@ fleet done                  # tear down + archive when finished
 | Command | Who | What |
 |---|---|---|
 | `fleet --guide` | you | linear walkthrough for a first run |
-| `fleet init` | you | install prompts + scaffold state |
+| `fleet init [--install-mail-hook]` | you | install prompts + scaffold state + offer the mail hook |
 | `fleet migrate [--dry-run]` | you | move state written by an older version |
 | `fleet recruit [--agent] [--provider]` | you | provision a worktree + launch a worker |
 | `fleet qm [--agent]` | you | launch the Quartermaster |
@@ -114,15 +114,25 @@ fleet done                  # tear down + archive when finished
 | `fleet ls [--porcelain]` | you / QM | compact one-line-per-worker roster |
 | `fleet status [--verbose]` | QM | one-shot readout |
 | `fleet inspect <callsign>` | QM | one worker's full file + mail |
-| `fleet msg <callsign\|all> "…"` | QM | async directive to a worker |
+| `fleet msg <callsign\|all> "…"` | QM | async directive, delivered when the worker next goes idle |
 | `fleet dismiss <callsign> [--force]` | you / QM | stand down a worker from outside its worktree |
 | `fleet sync [flags]` | worker | update own state |
-| `fleet inbox [--all]` | worker | drain mailbox |
+| `fleet inbox [--all]` | worker | drain mailbox by hand |
+| `fleet notify --hook` | agent | Stop-hook entry point; delivers mail (never typed) |
 | `fleet done [--force]` | worker | teardown + archive |
 
 `fleet done` refuses to tear down a worktree with uncommitted changes — including
 untracked files — and lists what is at stake, so you never have to check before
 standing a worker down. Pass `--force` to discard the work deliberately.
+
+Mail is pushed, not polled. `fleet init` offers to install a Claude Code `Stop` hook
+that delivers a worker's unread directives into its context the moment it finishes a
+turn and goes idle — so `fleet msg all "…"` actually reaches everyone instead of
+waiting on each worker to run `fleet sync`. Delivery informs; it never interrupts a
+worker mid-task, and it cannot compel one to act. The hook is opt-in (it is the only
+thing fleet writes to your `settings.json`), inert outside fleet worktrees, and
+removable with `fleet notify --uninstall`. Decline it and mail still works — workers
+just see it on their next sync.
 
 `fleet done` runs from inside a worktree, which is no help when the agent never
 started. `fleet dismiss <callsign>` stands a worker down from anywhere in the repo,

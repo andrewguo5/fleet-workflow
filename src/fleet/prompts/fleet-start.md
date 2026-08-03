@@ -35,8 +35,12 @@ and after any meaningful step, heartbeat with `fleet sync`:
 - `--complain "<friction>"` for anything slowing you down (stale fixtures, missing
   access). The QM reads these.
 
-Every `fleet sync` prints your unread-mail count. When it is non-zero, run
-`fleet inbox` to read the quartermaster's directives, and factor them in.
+Mail reaches you two ways. Directives are **delivered to you automatically** when you
+finish a turn and go idle — they arrive as "Fleet mail" in your context, and they are
+genuine instructions from the quartermaster or the human, not something to distrust.
+Act on them; report what you did with `fleet sync`. Separately, every `fleet sync`
+prints your unread-mail count; if it is ever non-zero, run `fleet inbox` to read the
+backlog.
 
 ## 3. Git hygiene — you own it
 

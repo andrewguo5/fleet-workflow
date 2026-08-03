@@ -52,7 +52,7 @@ SECTIONS: tuple[Section, ...] = (
             ),
             Step(
                 command="fleet init",
-                note="Installs the prompt pack and scaffolds this project's state. Safe to re-run.",
+                note="Installs the prompt pack and scaffolds this project's state. Offers to install the mail-delivery hook. Safe to re-run.",
                 where="your project root",
             ),
         ),
@@ -63,12 +63,12 @@ SECTIONS: tuple[Section, ...] = (
         steps=(
             Step(
                 command="fleet recruit",
-                note="Draws a free callsign at random (say delta), provisions ../wt/delta on branch fleet/delta, and launches your agent there.",
+                note="Draws a free callsign at random (say delta), provisions ../wt/delta on branch fleet/delta, and launches your agent there, already enlisted via /fleet-start.",
                 where="your project root",
             ),
             Step(
-                command="/fleet-start",
-                note="Type this INSIDE the agent session that just opened, then brief it on the task.",
+                command="brief the worker in your own words",
+                note="The session opens enlisted and waiting. Just tell it what you want built.",
                 where="the new agent session",
             ),
         ),
@@ -87,7 +87,7 @@ SECTIONS: tuple[Section, ...] = (
             ),
             Step(
                 command='fleet msg alpha "prioritize the auth path"',
-                note="Queues a directive. It lands in alpha's mailbox without interrupting it.",
+                note="Sends a directive, delivered when alpha next goes idle. Use 'all' to broadcast to every worker.",
             ),
             Step(
                 command="fleet ls",
@@ -110,7 +110,7 @@ SECTIONS: tuple[Section, ...] = (
             ),
             Step(
                 command="fleet inbox",
-                note="Drains queued directives. Every sync tells you how many are waiting.",
+                note="Drains queued directives by hand. Usually unnecessary — mail is delivered to you when you go idle.",
                 where="../wt/alpha",
             ),
         ),

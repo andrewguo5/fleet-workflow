@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from fleet import launch as launch_mod
 from fleet.callsign import NATO_ALPHABET, FleetFullError, pick_available
 
 from conftest import GIT_ENV, git, occupy_callsigns
@@ -160,6 +161,48 @@ def test_recruit_reattaches_to_an_existing_branch(repo: Path, fleet, worktree_of
 
     assert (worktree / "feature.py").exists()
     assert "resumed work" in git("log", "--oneline", cwd=worktree)
+
+
+# --------------------------------------------------------------------------
+# enlisting the launched session
+# --------------------------------------------------------------------------
+
+def test_recruit_primes_the_session_to_enlist(repo: Path, fleet, monkeypatch, store, worktree_of):
+    """The agent must enlist without the human typing anything.
+
+    Left as a manual step, skipping it is silent: the session opens looking normal and
+    simply never joins the fleet, so the worker is invisible to watch/status with no
+    error to notice.
+    """
+    captured: dict = {}
+
+    def fake_launch(directory, agent_cmd, initial_prompt=None, callsign=None):
+        captured.update(
+            directory=directory, agent_cmd=agent_cmd,
+            initial_prompt=initial_prompt, callsign=callsign,
+        )
+        return None  # as if it exec'd
+
+    monkeypatch.setattr(launch_mod, "launch", fake_launch)
+    monkeypatch.setattr(launch_mod, "can_launch", lambda cmd: True)
+    fleet("init", cwd=repo)
+
+    fleet("recruit", "--agent", "claude", cwd=repo)
+
+    callsign = only_callsign(store)
+    assert captured["initial_prompt"] == "/fleet-start"
+    assert captured["callsign"] == callsign
+    assert captured["directory"] == worktree_of(callsign)
+
+
+def test_recruit_without_an_agent_tells_you_to_enlist(repo: Path, fleet):
+    """No --agent means no session to prime, so the step falls back to the human."""
+    fleet("init", cwd=repo)
+
+    result = fleet("recruit", cwd=repo)
+
+    assert result.ok, result.output
+    assert "/fleet-start" in result.output
 
 
 def test_unknown_provider_is_rejected(repo: Path, fleet):
