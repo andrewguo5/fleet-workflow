@@ -108,7 +108,7 @@ fleet done                  # stand down when finished; the worktree is released
 | `fleet --guide` | you | linear walkthrough for a first run |
 | `fleet init [--install-mail-hook]` | you | install prompts + scaffold state + offer the mail hook |
 | `fleet migrate [--dry-run]` | you | move state written by an older version |
-| `fleet recruit [--agent] [--provider]` | you | provision a worktree + launch a worker |
+| `fleet recruit [--agent] [--provider] [--no-fetch]` | you | provision a worktree off a fresh trunk + launch a worker |
 | `fleet qm [--agent]` | you | launch the Quartermaster |
 | `fleet watch [--interval]` | you | live dashboard |
 | `fleet ls [--porcelain]` | you / QM | compact one-line-per-worker roster |
@@ -116,6 +116,7 @@ fleet done                  # stand down when finished; the worktree is released
 | `fleet inspect <callsign>` | QM | one worker's full file + mail |
 | `fleet msg <callsign\|all> "…"` | QM | async directive, delivered when the worker next goes idle |
 | `fleet dismiss <callsign> [--force]` | you / QM | stand down a worker from outside its worktree |
+| `fleet sweep [--delete-unlanded]` | you | clear leftover `fleet/*` branches no worker holds |
 | `fleet sync [flags]` | worker | update own state |
 | `fleet inbox [--all]` | worker | drain mailbox by hand |
 | `fleet notify --check` | you | verify mail delivery is installed and reachable |

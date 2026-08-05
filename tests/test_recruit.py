@@ -19,6 +19,7 @@ import pytest
 
 from fleet import launch as launch_mod
 from fleet.callsign import NATO_ALPHABET, FleetFullError, pick_available
+from fleet.worker import today_stamp
 
 from conftest import GIT_ENV, git, occupy_callsigns
 
@@ -285,3 +286,113 @@ def test_concurrent_recruits_write_one_file_each(repo: Path, fleet, isolated_sta
 
     assert len(store.live_callsigns()) == CONCURRENT_RECRUITS
     assert len(set(store.live_callsigns())) == CONCURRENT_RECRUITS
+
+
+# --------------------------------------------------------------------------
+# freshness — the base a worktree is cut from
+# --------------------------------------------------------------------------
+#
+# A worker that starts from a stale base does work that was never asked for: it
+# re-solves problems already fixed on the trunk, and its merge conflicts with them.
+# The base is therefore resolved explicitly rather than inherited from whatever the
+# repo root happens to have checked out.
+
+
+def test_recruit_branches_from_the_fetched_remote_trunk(cloned_repo: Path, advance_origin, fleet, worktree_of, store):
+    """The bug this exists to prevent: local `main` is behind, and the worker inherits it.
+
+    `origin/main` moves while the clone knows nothing about it. Recruit must fetch and
+    cut from the remote ref, so the worktree contains upstream work that local `main`
+    has never seen.
+    """
+    upstream_head = advance_origin("fixed upstream")
+    assert upstream_head not in git("rev-parse", "main", cwd=cloned_repo)
+
+    result = fleet("recruit", cwd=cloned_repo)
+
+    assert result.ok, result.output
+    worktree = worktree_of(only_callsign(store))
+    assert git("rev-parse", "HEAD", cwd=worktree) == upstream_head
+    assert (worktree / "fixed_upstream.txt").exists()
+
+
+def test_recruit_reports_the_base_it_used(cloned_repo: Path, fleet):
+    """The base is shown, so a stale worktree is never a silent outcome."""
+    result = fleet("recruit", cwd=cloned_repo)
+
+    assert "origin/main" in result.output
+
+
+def test_recruit_ignores_the_checked_out_branch(cloned_repo: Path, advance_origin, fleet, worktree_of, store):
+    """Bare `git worktree add -b` forks from the repo root's HEAD.
+
+    So a main worktree parked on a feature branch silently became every new worker's
+    base. The start-point is explicit now, and a detour like this must not reach it.
+    """
+    advance_origin("upstream work")
+    git("checkout", "-q", "-b", "someones-experiment", cwd=cloned_repo)
+    (cloned_repo / "experiment.txt").write_text("wip\n", encoding="utf-8")
+    git("add", "-A", cwd=cloned_repo)
+    git("commit", "-q", "-m", "unrelated experiment", cwd=cloned_repo)
+
+    assert fleet("recruit", cwd=cloned_repo).ok
+
+    worktree = worktree_of(only_callsign(store))
+    assert not (worktree / "experiment.txt").exists()
+    assert (worktree / "upstream_work.txt").exists()
+
+
+def test_recruit_survives_an_unreachable_remote(cloned_repo: Path, fleet, store, worktree_of):
+    """Being offline must not stop you working — but it must be said out loud."""
+    git("remote", "set-url", "origin", str(cloned_repo / "does-not-exist"), cwd=cloned_repo)
+
+    result = fleet("recruit", cwd=cloned_repo)
+
+    assert result.ok, result.output
+    assert "could not fetch" in result.output
+    assert worktree_of(only_callsign(store)).is_dir()
+
+
+def test_recruit_without_a_remote_uses_local_trunk(repo: Path, fleet, store, worktree_of):
+    """A repo with no remote is not an error, just unverifiable."""
+    result = fleet("recruit", cwd=repo)
+
+    assert result.ok, result.output
+    assert "no git remote" in result.output
+    assert worktree_of(only_callsign(store)).is_dir()
+
+
+def test_no_fetch_skips_the_network(cloned_repo: Path, advance_origin, fleet, worktree_of, store):
+    """`--no-fetch` is a deliberate opt-out, so it must not quietly fetch anyway."""
+    advance_origin("upstream work")
+
+    result = fleet("recruit", "--no-fetch", cwd=cloned_repo)
+
+    assert result.ok, result.output
+    worktree = worktree_of(only_callsign(store))
+    assert not (worktree / "upstream_work.txt").exists()
+    assert "fetch skipped" in result.output
+
+
+def test_recruit_never_reuses_a_leftover_branch(repo: Path, fleet, store, worktree_of):
+    """A branch outliving its worker must not become the next worker's base.
+
+    This is what poisons a callsign: the roster frees the name while the branch keeps
+    the old state, so the redrawn callsign silently starts weeks behind. Teardown
+    normally collects the branch, so this is the escaped case — a crash, a `kill -9` —
+    and recruit reclaims it rather than handing over its state.
+    """
+    git("branch", "fleet/alpha", cwd=repo)
+    git("checkout", "-q", "fleet/alpha", cwd=repo)
+    (repo / "ancient.txt").write_text("stale\n", encoding="utf-8")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "months-old work", cwd=repo)
+    git("checkout", "-q", "main", cwd=repo)
+    occupy_callsigns(store, [c for c in NATO_ALPHABET if c != "alpha"])
+
+    assert fleet("recruit", cwd=repo).ok
+
+    assert "alpha" in store.live_callsigns()
+    assert not (worktree_of("alpha") / "ancient.txt").exists()
+    # The old commit was never on the trunk, so it is kept rather than discarded.
+    assert f"fleet/alpha.abandoned-{today_stamp()}" in git("branch", "--list", "fleet/*", cwd=repo)

@@ -164,6 +164,63 @@ def repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def recruited(repo: Path, fleet, worktree_of, store):
+    """A repo with one recruited worker, and the path to its worktree.
+
+    The callsign is drawn at random, so it is read back from the store rather
+    than assumed.
+    """
+    fleet("init", cwd=repo)
+    result = fleet("recruit", cwd=repo)
+    assert result.ok, result.output
+    (callsign,) = store.live_callsigns()
+    return worktree_of(callsign)
+
+
+@pytest.fixture
+def cloned_repo(tmp_path: Path) -> Path:
+    """A clone with a real ``origin``, so freshness can actually be tested.
+
+    The staleness this guards against only exists where there is a remote to fall
+    behind, so the plain `repo` fixture cannot express it. Returns the clone; use
+    `advance_origin` to move the remote ahead of it.
+    """
+    upstream = tmp_path / "upstream.git"
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    git("init", "-q", "-b", "main", cwd=seed)
+    (seed / "README.md").write_text("# demo\n", encoding="utf-8")
+    git("add", "-A", cwd=seed)
+    git("commit", "-q", "-m", "initial", cwd=seed)
+    git("init", "-q", "--bare", "-b", "main", str(upstream), cwd=tmp_path)
+    git("remote", "add", "origin", str(upstream), cwd=seed)
+    git("push", "-q", "origin", "main", cwd=seed)
+
+    clone = tmp_path / "clone"
+    git("clone", "-q", str(upstream), str(clone), cwd=tmp_path)
+    return clone
+
+
+@pytest.fixture
+def advance_origin(tmp_path: Path):
+    """Push a new commit to the remote without touching the local clone.
+
+    This is precisely the stale state fleet must survive: `origin/main` has moved and
+    the local `main` has never heard about it.
+    """
+
+    def push(message: str = "upstream work") -> str:
+        seed = tmp_path / "seed"
+        (seed / f"{message.replace(' ', '_')}.txt").write_text(message, encoding="utf-8")
+        git("add", "-A", cwd=seed)
+        git("commit", "-q", "-m", message, cwd=seed)
+        git("push", "-q", "origin", "main", cwd=seed)
+        return git("rev-parse", "HEAD", cwd=seed)
+
+    return push
+
+
+@pytest.fixture
 def fleet(monkeypatch: pytest.MonkeyPatch):
     """Invoke the fleet CLI from a given directory, in-process.
 
@@ -184,7 +241,15 @@ def fleet(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def store(repo: Path) -> FleetStore:
+def store(request, repo: Path) -> FleetStore:
+    """The fleet state for the repo under test.
+
+    Freshness tests work in `cloned_repo` rather than `repo`, and fleet keys its state
+    off the repo root — so a store pointed at the wrong one would report an empty
+    roster and quietly assert nothing.
+    """
+    if "cloned_repo" in request.fixturenames:
+        return FleetStore(cwd=request.getfixturevalue("cloned_repo"))
     return FleetStore(cwd=repo)
 
 

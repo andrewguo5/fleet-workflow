@@ -47,6 +47,12 @@ Draws a free NATO callsign at random (say `delta`), creates an isolated worktree
 `../wt/delta` on a new `fleet/delta` branch, and launches your agent inside it. Your
 current terminal *becomes* that agent session. `fleet ls` tells you who you got.
 
+The branch is cut from a **freshly fetched `origin/main`**, not from whatever your repo
+happens to have checked out. A worker that starts stale re-solves problems already fixed
+on the trunk and then conflicts with them on merge, so recruit fetches first and prints
+the base it used. Offline, it says so and falls back to your local trunk rather than
+refusing to work; `--no-fetch` skips the fetch deliberately.
+
 Claude Code sessions show their callsign in the status line (`⬢ delta`), so agents
 stay tellable apart when several share a window in split panes. The callsign is also
 exported as `$FLEET_CALLSIGN`. The status line is scoped to the worktree — your own
@@ -121,8 +127,13 @@ Marks the worker `standing-down`. **Your worktree is still there afterwards — 
 correct, not a failure.** `fleet done` runs from inside the worktree, and deleting a
 directory out from under the session standing in it leaves that session unable to spawn
 anything at all. So the delete waits: once you exit, the next `fleet` command anyone runs
-releases the worktree, archives the record, and frees the callsign. The `fleet/alpha`
-branch is left alone either way.
+releases the worktree, archives the record, and frees the callsign.
+
+Teardown also collects the `fleet/alpha` branch, so the callsign comes back clean. If
+your work landed on the trunk, the branch is deleted — every commit is already upstream,
+so nothing is lost. If it didn't, the branch is **kept** and renamed to
+`fleet/alpha.abandoned-<date>`: that branch may be the only copy of the work, but leaving
+it under its original name would quietly reserve the callsign forever.
 
 Use `fleet dismiss <callsign>` from outside the worktree when you want teardown to happen
 immediately — that path is for worktrees nobody is inside, so it doesn't wait.

@@ -14,6 +14,7 @@ import pytest
 
 from fleet.callsign import NATO_ALPHABET
 from fleet.launch import can_launch
+from fleet.worker import today_stamp
 
 from conftest import git
 
@@ -112,18 +113,41 @@ def stranded(initialized: Path, fleet, worktree_of, store):
 
 def test_dismiss_tears_down_from_the_repo_root(stranded: Path, fleet, initialized: Path, store):
     """The whole point: `done` needs to run inside the worktree, `dismiss` does not.
-    Teardown removes the worktree and archives the record, but keeps the branch — the
-    commits are the one thing recovery must never discard."""
+    Teardown removes the worktree and archives the record.
+
+    A stranded worker never committed anything, so its branch holds nothing the trunk
+    does not already have and teardown collects it — leaving it behind would reserve
+    the callsign forever. The commit-preserving case is covered below."""
     result = fleet("dismiss", stranded.name, cwd=initialized)
 
     assert result.ok, result.output
     assert not stranded.exists()
     assert store.live_callsigns() == []
-    assert f"fleet/{stranded.name}" in git("branch", "--list", "fleet/*", cwd=initialized)
+    assert git("branch", "--list", "fleet/*", cwd=initialized) == ""
 
     archived = list(store.archive_dir.glob(f"*-{stranded.name}.md"))
     assert len(archived) == 1
     assert "status: done" in archived[0].read_text(encoding="utf-8")
+
+
+def test_dismiss_keeps_unlanded_commits(stranded: Path, fleet, initialized: Path):
+    """The one thing recovery must never do is discard commits.
+
+    A crashed worker's branch may hold the only copy of its work, so teardown keeps it.
+    It is renamed aside rather than left in place: staying would silently reserve the
+    callsign, and a name the roster calls free but recruit refuses is its own bug.
+    """
+    callsign = stranded.name
+    git("commit", "-q", "--allow-empty", "-m", "unmerged work", cwd=stranded)
+    rescued = git("rev-parse", "HEAD", cwd=stranded)
+
+    assert fleet("dismiss", callsign, cwd=initialized).ok
+
+    branches = git("branch", "--list", "fleet/*", cwd=initialized)
+    assert f"fleet/{callsign}.abandoned-" in branches
+    # The callsign itself is free again, and the commit is still reachable.
+    assert f"fleet/{callsign}\n" not in branches
+    assert rescued in git("rev-parse", f"fleet/{callsign}.abandoned-{today_stamp()}", cwd=initialized)
 
 
 def test_dismiss_frees_the_callsign(stranded: Path, fleet, initialized: Path, store):

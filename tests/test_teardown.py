@@ -26,20 +26,6 @@ from fleet.callsign import NATO_ALPHABET
 from conftest import age_past_grace, git, occupy_callsigns
 
 
-@pytest.fixture
-def recruited(repo: Path, fleet, worktree_of, store):
-    """A repo with one recruited worker, and the path to its worktree.
-
-    The callsign is drawn at random, so it is read back from the store rather
-    than assumed.
-    """
-    fleet("init", cwd=repo)
-    result = fleet("recruit", cwd=repo)
-    assert result.ok, result.output
-    (callsign,) = store.live_callsigns()
-    return worktree_of(callsign)
-
-
 # --------------------------------------------------------------------------
 # what counts as dirty
 # --------------------------------------------------------------------------
