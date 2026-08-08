@@ -332,9 +332,13 @@ def migrate(
 def recruit(
     agent: str = typer.Option(None, "--agent", help="Command that opens your coding agent, e.g. 'claude' or 'claude-work'. Falls back to $FLEET_AGENT."),
     provider: str = typer.Option("plain", "--provider", help="Worktree backend: plain | treehouse."),
+    fetch: bool = typer.Option(True, "--fetch/--no-fetch", help="Fetch the remote first so the worktree is cut from an up-to-date trunk."),
 ) -> None:
     """Draw a free callsign at random, provision an isolated worktree+branch, write a worker
-    stub, then chdir into the worktree and launch your agent there, primed to enlist."""
+    stub, then chdir into the worktree and launch your agent there, primed to enlist.
+
+    The branch is cut from the freshly-fetched remote trunk, so a worker never inherits
+    an unpulled local trunk or whatever branch the main worktree happens to be on."""
     store = _store()
     store.ensure_dirs()
 
@@ -349,13 +353,19 @@ def recruit(
             "(--agent, or $FLEET_AGENT)."
         )
 
+    # Before the lock: holding it across a network round-trip serializes parallel recruits.
+    base = worktree_mod.fresh_trunk(store.repo_root, fetch=fetch)
+
     with store.lock():
         try:
             callsign = pick_available(store.live_callsigns())
         except FleetFullError as e:
             _fail(str(e))
+        # Teardown normally collects this, so a surviving branch means something escaped
+        # that path. Reclaim it: the callsign is free, only the ref is in the way.
+        _collect_branch(store, f"fleet/{callsign}", context="reclaimed")
         try:
-            wt = get_provider(provider, store.repo_root).acquire(callsign)
+            wt = get_provider(provider, store.repo_root).acquire(callsign, base=base.ref)
         except WorktreeError as e:
             _fail(f"could not provision worktree: {e}")
         stub = Worker(
@@ -374,6 +384,10 @@ def recruit(
     console.print(f"[green]recruited[/green] [bold]{callsign}[/bold]")
     console.print(f"  branch   : fleet/{callsign}")
     console.print(f"  worktree : {wt}")
+    console.print(f"  base     : {base.ref}" + ("" if base.fetched else " [dim](not fetched)[/dim]"))
+    if base.warning:
+        # Never let an unverified base pass silently — that is the whole failure mode.
+        console.print(f"  [yellow]warning  : {base.warning}[/yellow]")
 
     # Prime the session with /fleet-start so the worker enlists on its own. Left to the
     # human, this step is silently skippable: the agent opens looking perfectly normal
@@ -737,11 +751,40 @@ def _reap(store: FleetStore, callsign: str, force: bool = False) -> Path | None:
             )
         except WorktreeError as e:
             console.print(f"[yellow]worktree teardown warning: {e}[/yellow]")
+        # Only after the worktree is gone: git refuses to delete a checked-out branch.
+        _collect_branch(store, w.branch or f"fleet/{callsign}")
         archive_path = store.archive_dir / f"{today_stamp()}-{callsign}.md"
         store.atomic_write(archive_path, w.render())
         store.worker_path(callsign).unlink(missing_ok=True)
         store.mail_path(callsign).unlink(missing_ok=True)
     return archive_path
+
+
+def _collect_branch(store: FleetStore, branch: str, context: str = "deleted") -> None:
+    """Clear a branch out of a callsign's way, without ever destroying commits.
+
+    Garbage collection, not a content git op: a branch whose patches are all upstream
+    holds nothing that deleting it could lose. Left behind it poisons the callsign pool,
+    since the roster frees the name while the branch keeps it. Unlanded work is renamed
+    aside instead of deleted — it may be the only copy, but it does not keep the name.
+
+    Deliberately does not fetch; a misjudgement can only keep a branch it could have
+    deleted, never the reverse.
+    """
+    if not worktree_mod.branch_exists(branch, store.repo_root):
+        return
+    base = worktree_mod.fresh_trunk(store.repo_root, fetch=False)
+    try:
+        if worktree_mod.has_landed(branch, base.ref, store.repo_root):
+            worktree_mod.delete_branch(branch, store.repo_root)
+            console.print(f"  {context} {branch} [dim](landed on {base.ref})[/dim]")
+            return
+        kept = worktree_mod.abandon_branch(branch, today_stamp(), store.repo_root)
+        console.print(
+            f"  [yellow]{branch} has work not on {base.ref}[/yellow] — kept as {kept}."
+        )
+    except WorktreeError as e:
+        console.print(f"  [yellow]could not collect {branch}: {e}[/yellow]")
 
 
 def _cwd_or_none() -> Path | None:
@@ -805,6 +848,59 @@ def done(
 
 
 @app.command()
+def sweep(
+    delete_unlanded: bool = typer.Option(False, "--delete-unlanded", help="Also delete orphan branches whose work never landed. Destroys commits."),
+    fetch: bool = typer.Option(True, "--fetch/--no-fetch", help="Fetch the remote first, so 'landed' is judged against the current trunk."),
+) -> None:
+    """Clear leftover ``fleet/*`` branches that no live worker holds.
+
+    Standdown already collects a worker's branch, so this is for what escapes that
+    path: crashed agents, killed sessions, and branches created before fleet collected
+    them at all. Left alone they leak callsigns — the roster frees the name while the
+    branch keeps it.
+
+    Landed branches are deleted outright. Branches still holding unique work are
+    renamed to ``fleet/<callsign>.abandoned-<date>``: the commits survive untouched,
+    but the callsign goes back in the pool."""
+    store = _store()
+    base = worktree_mod.fresh_trunk(store.repo_root, fetch=fetch)
+    if base.warning:
+        console.print(f"[yellow]{base.warning}[/yellow]")
+
+    held = {f"fleet/{c}" for c in store.live_callsigns()}
+    orphans = [b for b in worktree_mod.fleet_branches(store.repo_root) if b not in held]
+    if not orphans:
+        console.print("[green]nothing to sweep[/green] — no orphan fleet branches.")
+        return
+
+    deleted, kept = [], []
+    for branch in orphans:
+        unlanded = worktree_mod.unlanded_commits(branch, base.ref, store.repo_root)
+        try:
+            if unlanded and not delete_unlanded:
+                kept.append((worktree_mod.abandon_branch(branch, today_stamp(), store.repo_root), len(unlanded)))
+                continue
+            worktree_mod.delete_branch(branch, store.repo_root)
+            deleted.append((branch, len(unlanded)))
+        except WorktreeError as e:
+            console.print(f"[yellow]could not sweep {branch}: {e}[/yellow]")
+
+    for branch, lost in deleted:
+        note = f" [red](discarded {lost} unlanded commit(s))[/red]" if lost else ""
+        console.print(f"  [green]deleted[/green] {branch}{note}")
+    for kept_name, count in kept:
+        console.print(f"  [yellow]kept[/yellow]    {kept_name} — {count} commit(s) not on {base.ref}")
+
+    console.print(f"swept {len(deleted)} branch(es), kept {len(kept)}.")
+    if kept:
+        console.print(
+            f"  [dim]kept branches were renamed aside so their callsigns are free again.[/dim]\n"
+            f"  [dim]inspect one with `git log {base.trunk}..<branch>`; merge it, or "
+            "re-run with --delete-unlanded to discard.[/dim]"
+        )
+
+
+@app.command()
 def dismiss(
     callsign: str = typer.Argument(..., help="Worker to stand down."),
     force: bool = typer.Option(False, "--force", help="Tear down even if the worktree has uncommitted changes (they are discarded)."),
@@ -814,7 +910,7 @@ def dismiss(
     Recovery for a worker nobody is inside: an agent that failed to launch, crashed on
     startup, or was abandoned. ``fleet done`` must run from within the worktree, which
     is exactly what you cannot do when no session is there. Same rules as ``done`` —
-    the branch survives and uncommitted work blocks teardown.
+    uncommitted work blocks teardown, and any commits the branch still holds are kept.
 
     Tears down in one step rather than two. The delay ``done`` accepts exists to spare
     the session inside the worktree; dismiss is *for* worktrees nobody is inside, so
