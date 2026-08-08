@@ -292,10 +292,8 @@ def test_concurrent_recruits_write_one_file_each(repo: Path, fleet, isolated_sta
 # freshness — the base a worktree is cut from
 # --------------------------------------------------------------------------
 #
-# A worker that starts from a stale base does work that was never asked for: it
-# re-solves problems already fixed on the trunk, and its merge conflicts with them.
-# The base is therefore resolved explicitly rather than inherited from whatever the
-# repo root happens to have checked out.
+# A worker on a stale base re-solves problems already fixed on the trunk, then conflicts
+# with them on merge. So the base is resolved explicitly, never inherited from HEAD.
 
 
 def test_recruit_branches_from_the_fetched_remote_trunk(cloned_repo: Path, advance_origin, fleet, worktree_of, store):
@@ -379,8 +377,7 @@ def test_recruit_never_reuses_a_leftover_branch(repo: Path, fleet, store, worktr
 
     This is what poisons a callsign: the roster frees the name while the branch keeps
     the old state, so the redrawn callsign silently starts weeks behind. Teardown
-    normally collects the branch, so this is the escaped case — a crash, a `kill -9` —
-    and recruit reclaims it rather than handing over its state.
+    normally collects it; this is the escaped case, which recruit reclaims.
     """
     git("branch", "fleet/alpha", cwd=repo)
     git("checkout", "-q", "fleet/alpha", cwd=repo)

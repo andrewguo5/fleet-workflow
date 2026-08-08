@@ -353,8 +353,7 @@ def recruit(
             "(--agent, or $FLEET_AGENT)."
         )
 
-    # Resolve the base before taking the lock: the fetch is the slow part, and holding
-    # the callsign lock across a network round-trip would serialize parallel recruits.
+    # Before the lock: holding it across a network round-trip serializes parallel recruits.
     base = worktree_mod.fresh_trunk(store.repo_root, fetch=fetch)
 
     with store.lock():
@@ -362,10 +361,8 @@ def recruit(
             callsign = pick_available(store.live_callsigns())
         except FleetFullError as e:
             _fail(str(e))
-        # A branch that outlived its worker must never become the new worker's base.
-        # Teardown normally collects it, so reaching here means something escaped that
-        # path — a crash, a kill -9. Reclaim it in place rather than failing the
-        # recruit: the callsign is legitimately free, and only the ref is in the way.
+        # Teardown normally collects this, so a surviving branch means something escaped
+        # that path. Reclaim it: the callsign is free, only the ref is in the way.
         _collect_branch(store, f"fleet/{callsign}", context="reclaimed")
         try:
             wt = get_provider(provider, store.repo_root).acquire(callsign, base=base.ref)
@@ -766,18 +763,13 @@ def _reap(store: FleetStore, callsign: str, force: bool = False) -> Path | None:
 def _collect_branch(store: FleetStore, branch: str, context: str = "deleted") -> None:
     """Clear a branch out of a callsign's way, without ever destroying commits.
 
-    This is garbage collection, not a content git op: a branch whose every patch is
-    already upstream holds nothing that deleting it could lose. Leaving it behind is
-    what poisons the callsign pool — the worker file is archived and the callsign
-    becomes drawable again while the branch lives on forever, so a later recruit finds
-    a stale branch wearing its name.
+    Garbage collection, not a content git op: a branch whose patches are all upstream
+    holds nothing that deleting it could lose. Left behind it poisons the callsign pool,
+    since the roster frees the name while the branch keeps it. Unlanded work is renamed
+    aside instead of deleted — it may be the only copy, but it does not keep the name.
 
-    Unlanded work is never deleted, only renamed aside: that branch may be the only
-    copy. It does not get to keep the callsign either, which is the whole point.
-
-    Deliberately does not fetch. Teardown and recruit both call this on a path where a
-    network round-trip would be an unwelcome surprise, and a misjudgement can only make
-    it keep a branch it could have deleted — never the reverse.
+    Deliberately does not fetch; a misjudgement can only keep a branch it could have
+    deleted, never the reverse.
     """
     if not worktree_mod.branch_exists(branch, store.repo_root):
         return

@@ -1,15 +1,13 @@
 """Branch garbage collection — standdown collection and `fleet sweep`.
 
-Fleet's callsign pool leaks without this. A worker's file is archived at teardown and
-its name returns to the roster, but its branch has no such lifecycle: left alone it
-outlives every worker that ever held the name, and the next recruit to draw that
+Without this the callsign pool leaks: a worker's file is archived at teardown, but its
+branch outlives every worker that ever held the name, so the next recruit to draw that
 callsign finds a branch already wearing it.
 
-The load-bearing distinction is *landed* vs *unlanded*, and it cannot be answered by
-commit reachability. Fleet's workflow is squash-merge, so a branch that landed
-perfectly shares no SHAs with the trunk; `git branch --merged` calls it unmerged and
-would make collection a no-op precisely in the common case. `git cherry` compares
-patch content instead, which is why these tests squash-merge rather than merge.
+The load-bearing distinction is *landed* vs *unlanded*, and reachability cannot answer
+it. Fleet squash-merges, so `git branch --merged` calls a landed branch unmerged and
+would make collection a no-op in the common case — which is why these tests squash-merge
+rather than merge.
 """
 
 from __future__ import annotations
@@ -17,9 +15,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from fleet import worktree as worktree_mod
+from fleet.callsign import NATO_ALPHABET
 from fleet.worker import today_stamp
 
-from conftest import git
+from conftest import git, occupy_callsigns
 
 
 def squash_merge(repo: Path, branch: str, message: str = "landed") -> None:
@@ -98,8 +97,6 @@ def test_a_collected_callsign_is_immediately_recruitable(recruited: Path, repo: 
     squash_merge(repo, f"fleet/{callsign}")
     stand_down(recruited)
 
-    from conftest import occupy_callsigns
-    from fleet.callsign import NATO_ALPHABET
     occupy_callsigns(store, [c for c in NATO_ALPHABET if c != callsign])
 
     assert fleet("recruit", cwd=repo).ok

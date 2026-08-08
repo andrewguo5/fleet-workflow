@@ -6,9 +6,9 @@ is backend-agnostic and simply records whatever path the provider returns.
 - ``Treehouse`` (strict opt-in): leases a pooled worktree from the ``treehouse`` CLI
   and checks out ``fleet/<callsign>`` inside it, for build-cache/dependency reuse.
 
-Neither provider merges anything — content git ops (including the eventual squash
-merge) belong to the worker, not to fleet. Fleet does delete a worker's branch once
-its patches have landed on the trunk, which destroys no commits; see ``has_landed``.
+Neither provider merges anything — content git ops belong to the worker. Fleet does
+delete a worker's branch once its patches have landed, which destroys no commits;
+see ``has_landed``.
 """
 
 from __future__ import annotations
@@ -18,10 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-# Trunk candidates tried in order when the remote publishes no default branch.
 TRUNK_FALLBACKS = ("main", "master")
-
-# Marks a branch kept for its commits but no longer claiming its callsign.
 ABANDONED_MARKER = ".abandoned-"
 
 
@@ -78,10 +75,10 @@ def _git_ok(args: list[str], cwd: Path) -> bool:
 
 
 def default_remote(cwd: Path) -> str | None:
-    """The remote to fetch from: ``origin`` when present, else the only one, else None.
+    """The remote to fetch from: ``origin``, else the only one, else None.
 
-    A repo with several remotes and no ``origin`` is ambiguous, and guessing which one
-    defines "fresh" would be worse than admitting we cannot tell.
+    Several remotes and no ``origin`` is ambiguous; guessing which defines "fresh"
+    would be worse than admitting we cannot tell.
     """
     try:
         remotes = [r for r in _git(["remote"], cwd).splitlines() if r.strip()]
@@ -95,10 +92,9 @@ def default_remote(cwd: Path) -> str | None:
 def resolve_trunk(cwd: Path, remote: str | None = None) -> str:
     """Name the repo's trunk branch — ``main``, ``master``, or whatever the remote says.
 
-    Prefers the remote's published default (``refs/remotes/<remote>/HEAD``), which is
-    authoritative but only populated by a fresh clone or an explicit
-    ``git remote set-head``; unset is common, so fall back to the conventional names
-    and finally to the checked-out branch.
+    ``refs/remotes/<remote>/HEAD`` is authoritative but only populated by a fresh clone
+    or an explicit ``git remote set-head``, so unset is common: fall back to the
+    conventional names, then to the checked-out branch.
     """
     if remote:
         try:
@@ -126,9 +122,8 @@ def resolve_trunk(cwd: Path, remote: str | None = None) -> str:
 class TrunkBase:
     """The ref a new worktree should be cut from, and how much to trust it.
 
-    ``ref`` is what to branch from. ``fetched`` records whether we reached the remote,
-    so the caller can warn that freshness is unverified rather than quietly implying
-    it. ``warning`` carries the reason when we could not confirm.
+    ``warning`` is set whenever freshness could not be confirmed, so the caller can say
+    so rather than quietly implying it.
     """
 
     ref: str
@@ -136,18 +131,13 @@ class TrunkBase:
     fetched: bool
     warning: str | None = None
 
-    @property
-    def is_remote(self) -> bool:
-        return "/" in self.ref
-
 
 def fresh_trunk(repo_root: Path, fetch: bool = True) -> TrunkBase:
     """Resolve the freshest available trunk ref, fetching first when we can.
 
-    Returns the remote-tracking ref (``origin/main``) on success, so provisioning is
-    immune to a local trunk that was never pulled. Falls back to the local branch when
-    there is no remote or the fetch fails — being offline should not stop you working,
-    but it is always reported rather than silently tolerated.
+    Returns the remote-tracking ref on success, so provisioning is immune to a local
+    trunk that was never pulled. Being offline falls back to the local branch rather
+    than refusing to work, but is always reported.
     """
     remote = default_remote(repo_root)
     if remote is None:
@@ -184,36 +174,27 @@ def fresh_trunk(repo_root: Path, fetch: bool = True) -> TrunkBase:
 def unlanded_commits(branch: str, trunk_ref: str, cwd: Path) -> list[str]:
     """Commits on ``branch`` whose patches are not yet present on ``trunk_ref``.
 
-    Uses ``git cherry``, which compares patch *content* rather than commit identity.
-    That distinction is the whole point here: fleet's workflow is squash-merge, so a
-    branch that landed perfectly still shares no SHAs with the trunk and every
-    reachability test (``git branch --merged``, ``merge-base --is-ancestor``) would
-    call it unmerged. Lines are prefixed ``+`` when unapplied and ``-`` when already
-    upstream.
+    ``git cherry`` compares patch content, not commit identity. Fleet squash-merges, so
+    a branch that landed perfectly shares no SHAs with the trunk and every reachability
+    test (``git branch --merged``, ``merge-base --is-ancestor``) would call it unmerged.
     """
     try:
         out = _git(["cherry", trunk_ref, branch], cwd)
     except WorktreeError:
-        # An unresolvable ref means we cannot prove the branch landed, and the caller
-        # must treat "unknown" exactly like "unlanded" — never delete on a failed check.
+        # Unknown must read as unlanded: a failed check may never authorize a delete.
         return ["?"]
     return [line[2:] for line in out.splitlines() if line.startswith("+")]
 
 
 def has_landed(branch: str, trunk_ref: str, cwd: Path) -> bool:
-    """Whether every commit on ``branch`` is already represented on the trunk.
-
-    True means deleting the branch destroys nothing: the work is reachable from the
-    trunk under different SHAs. False means real work would be lost.
-    """
+    """Whether deleting ``branch`` would destroy nothing — every patch is on the trunk."""
     return not unlanded_commits(branch, trunk_ref, cwd)
 
 
 def fleet_branches(cwd: Path) -> list[str]:
     """Every local ``fleet/<callsign>`` branch, sorted. The candidate set for sweeping.
 
-    Tombstones (``fleet/<callsign>.abandoned-*``) are excluded: they have already been
-    dealt with, and their whole purpose is to no longer claim a callsign.
+    Tombstones are excluded — their whole purpose is to no longer claim a callsign.
     """
     try:
         out = _git(["for-each-ref", "--format=%(refname:short)", "refs/heads/fleet/"], cwd)
@@ -232,11 +213,8 @@ def is_worker_branch(branch: str) -> bool:
 def abandon_branch(branch: str, stamp: str, cwd: Path) -> str:
     """Rename a branch aside so it keeps its commits without holding its callsign.
 
-    The alternative to deleting unlanded work is not keeping the branch where it is:
-    that quietly reserves the callsign forever, and a name the roster reports as free
-    but recruit refuses is worse than either deleting or renaming. Moving it to
-    ``fleet/<callsign>.abandoned-<stamp>`` preserves every commit while releasing the
-    name, and leaves an obvious label for whoever decides what to do with it.
+    Leaving unlanded work under its original name quietly reserves that callsign
+    forever, which is worse than either deleting or renaming.
     """
     target = f"{branch}{ABANDONED_MARKER}{stamp}"
     suffix = 2
@@ -251,9 +229,8 @@ def abandon_branch(branch: str, stamp: str, cwd: Path) -> str:
 def delete_branch(branch: str, cwd: Path) -> None:
     """Delete a local branch whose work has landed.
 
-    Uses ``-D``: ``-d`` refuses squash-merged branches for the same reachability reason
-    ``has_landed`` exists to work around. Safety comes from the caller having proved
-    the patches are upstream, not from git's own check.
+    ``-D`` because ``-d`` refuses squash-merged branches for the same reachability
+    reason ``has_landed`` works around; safety comes from the caller's proof, not git's.
     """
     _git(["branch", "-D", branch], cwd)
 
@@ -280,14 +257,13 @@ class WorktreeProvider(Protocol):
     def acquire(self, callsign: str, base: str | None = None, resume: bool = False) -> str:
         """Provision (or re-attach) a worktree for the callsign; return its path.
 
-        ``base`` is the ref to cut a new branch from; None means the caller has no
-        opinion and the provider may use HEAD. ``resume`` asserts that an existing
-        ``fleet/<callsign>`` branch belongs to this same worker and may be re-attached
-        to; without it, a leftover branch is an error rather than a silent base.
+        ``base`` is the ref to cut a new branch from. ``resume`` asserts an existing
+        ``fleet/<callsign>`` branch belongs to this worker; without it a leftover branch
+        is an error rather than a silent base.
         """
 
     def release(self, callsign: str, worktree: str, force: bool = False) -> None:
-        """Tear down the worktree (the branch is left intact).
+        """Tear down the worktree, leaving the branch to the caller.
 
         Must raise ``DirtyWorktreeError`` rather than discard uncommitted work
         unless ``force`` is set.
@@ -312,18 +288,13 @@ class PlainGit:
         self.wt_base.mkdir(parents=True, exist_ok=True)
         if self._branch_exists(branch):
             if not resume:
-                # A branch with no live worker behind it is a leftover from a callsign
-                # used earlier, not a resume. Re-attaching would silently cut the new
-                # worker's work from however stale that branch is — the failure this
-                # whole check exists to prevent. Refuse and let the caller explain.
                 raise StaleTrunkError(
                     f"branch {branch} already exists but no worker holds it"
                 )
             _git(["worktree", "add", str(path), branch], cwd=self.repo_root)
         else:
-            # Always pass an explicit start-point. Bare `-b` forks from the repo root's
-            # HEAD, so a main worktree parked on a feature branch or an unpulled trunk
-            # would silently become every new worker's base.
+            # Explicit start-point: bare `-b` forks from the repo root's HEAD, so a main
+            # worktree parked on a feature branch becomes every new worker's base.
             add = ["worktree", "add", str(path), "-b", branch]
             _git([*add, base] if base else add, cwd=self.repo_root)
         return str(path)
@@ -369,10 +340,8 @@ class Treehouse:
             ["get", "--lease", "--lease-holder", f"fleet/{callsign}"], cwd=self.repo_root
         )
         path = Path(self._extract_path(out))
-        # Pooled worktrees are recycled, so the branch may already exist from an
-        # earlier lease; -b would fail on resume. Switch when it exists, create
-        # otherwise — mirroring PlainGit's re-attach behavior, including its refusal
-        # to treat a leftover branch as a resume.
+        # Pooled worktrees are recycled, so the branch may survive an earlier lease and
+        # -b would fail on resume. Mirrors PlainGit, refusal of leftovers included.
         if self._branch_exists(branch):
             if not resume:
                 raise StaleTrunkError(
